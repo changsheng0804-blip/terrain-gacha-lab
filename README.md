@@ -221,6 +221,10 @@ priority-flood 填洼
 
 ## 参考
 
+- 下一阶段完整规划：[docs/PLAN.md](docs/PLAN.md)
+- 任务板：[docs/ROADMAP.md](docs/ROADMAP.md)
+- 多智能体协作规则：[docs/AGENTS.md](docs/AGENTS.md)
+- 模块契约：[docs/CONTRACTS.md](docs/CONTRACTS.md)
 - 系列级技术拆解：[docs/oyasumi-gacha-reverse-engineering.md](docs/oyasumi-gacha-reverse-engineering.md)
 - 原项目 World Gacha：<https://oyasumi-gamedev.com/tools/worldgacha/>
 - 原项目工具入口：<https://tools.oyasumi-gamedev.com/worldgacha/>
