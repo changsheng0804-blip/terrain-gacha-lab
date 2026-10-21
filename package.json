@@ -1,0 +1,10 @@
+{
+  "name": "terrain-gacha-lab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node test/smoke.test.mjs && node test/town.test.mjs",
+    "serve": "node serve.mjs"
+  }
+}

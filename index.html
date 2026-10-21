@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Terrain Gacha Lab — 程序化地形实验</title>
+  <link rel="stylesheet" href="styles.css?v=20261021b">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="mark">TG</span>
+      <div>
+        <h1>Terrain Gacha Lab</h1>
+        <p>独立实现的程序化地形实验 · 非官方</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="exportPng" class="ghost" type="button">导出 PNG</button>
+      <button id="exportJson" class="ghost" type="button">导出状态 JSON</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="panel">
+      <section class="group">
+        <h2>地形</h2>
+        <label class="field">
+          <span>类型</span>
+          <select id="type">
+            <option value="river">河谷</option>
+            <option value="slope">海岸坡地</option>
+            <option value="onsen">山间温泉谷</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Seed</span>
+          <div class="row">
+            <input id="seed" type="number" min="1" max="999999999" value="20261019">
+            <button id="dice" class="icon" type="button" title="随机 seed">🎲</button>
+          </div>
+        </label>
+
+        <div class="grid2">
+          <label class="field">
+            <span>范围</span>
+            <select id="size">
+              <option value="2000">2 km</option>
+              <option value="4000">4 km</option>
+              <option value="6000" selected>6 km</option>
+              <option value="8000">8 km</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>分辨率</span>
+            <select id="res">
+              <option value="256">256</option>
+              <option value="512" selected>512</option>
+              <option value="1024">1024（慢）</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="check">
+          <input id="erosion" type="checkbox" checked>
+          <span>水滴侵蚀</span>
+        </label>
+
+        <button id="generate" class="primary" type="button">生成地形</button>
+      </section>
+
+      <section class="group">
+        <h2>视图</h2>
+        <div class="tabs" id="views">
+          <button data-view="color" class="on" type="button">彩色</button>
+          <button data-view="height" type="button">高度</button>
+          <button data-view="slope" type="button">坡度</button>
+          <button data-view="flow" type="button">汇流</button>
+          <button data-view="town" type="button">城镇</button>
+          <button data-view="3d" type="button">3D</button>
+        </div>
+        <label class="check">
+          <input id="showTown" type="checkbox" checked>
+          <span>显示城镇</span>
+        </label>
+        <div class="legend">
+          <span><i style="background:#e8aa5c"></i>中心</span>
+          <span><i style="background:#c4cc74"></i>住宅</span>
+          <span><i style="background:#6eaa60"></i>农田</span>
+          <span><i style="background:#b082c4"></i>工业</span>
+          <span><i style="background:#baa68e"></i>集落</span>
+        </div>
+        <p class="hint" id="hint">鼠标移到画布上查看高度、坡度、汇流量与分区。</p>
+      </section>
+
+      <section class="group">
+        <h2>统计</h2>
+        <div id="stats" class="stats">尚未生成</div>
+      </section>
+
+      <section class="group note">
+        <h2>说明</h2>
+        <p>这是一个独立重写的教学用 MVP，只借鉴公开的设计思想，不包含原项目代码或素材。</p>
+      </section>
+    </aside>
+
+    <section class="stage">
+      <div class="canvas-wrap">
+        <canvas id="canvas" width="512" height="512"></canvas>
+        <canvas id="canvas3d" width="512" height="512"></canvas>
+        <div id="status" class="status">准备就绪</div>
+        <div id="hover" class="hover"></div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="src/main.js?v=23"></script>
+</body>
+</html>
