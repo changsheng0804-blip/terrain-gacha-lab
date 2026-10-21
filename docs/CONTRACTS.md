@@ -132,6 +132,8 @@ ROCK: 4, SNOW: 5, WETLAND: 6
 
 - 数组长度 = `n*n`。
 - `forest` 在水面为 0；`snow` 在雪线以上显著。
+- `biome` 优先级：水 > 沙滩 > 雪 > 岩 > 湿地 > 森林 > 草地。
+- `stats.*Pct` 是整网格中对应 biome 的像元百分比；六项 + 水面百分比 = 100。
 - 同 seed 的生态场确定。
 - 不修改 `field` / `hydro` / `town` 输入。
 

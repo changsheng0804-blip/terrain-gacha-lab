@@ -111,7 +111,8 @@ export function buildEcology(field, hydro, town = null) {
 - `snow`：相对雪线 `max - 0.18 * (max - min)`，按坡度做保留。
 - `beach`：`dSea * cell < 35 && h < 4`，并给噪声抖动。
 - `forest`：`moisture` 高、坡度适中、非雪/非岩/非水，并乘城镇排除（`town.zones` 非 NONE 时衰减）。
-- `biome` 按优先级：水 > 沙滩 > 雪 > 岩 > 森林 > 湿地 > 草地。
+- `biome` 按优先级：水 > 沙滩 > 雪 > 岩 > 湿地 > 森林 > 草地。
+  - 湿地优先于森林，否则平坦河漫滩会被森林吸收，`WETLAND` 永远不可见。
 - 使用 `rngFor(field.seed, 'ecology:' + field.terrain.id)` 产生低频抖动，保持确定性。
 
 **测试**

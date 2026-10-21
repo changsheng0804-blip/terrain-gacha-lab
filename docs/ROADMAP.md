@@ -17,8 +17,8 @@
 
 | ID | 任务 | 主要文件 | 依赖 | 波次 | 优先级 | 状态 | 领取者 / 模型 |
 |---|---|---|---|---|---|---|---|
-| T00 | 把 seed 存回 field | `src/terrains.js` | 无 | 0 | P0 | 待领取 | — |
-| T01 | 生态数据层 | 新 `src/ecology.js`、新 `test/ecology.test.mjs` | T00 | 0 | P0 | 待领取 | — |
+| T00 | 把 seed 存回 field | `src/terrains.js` | 无 | 0 | P0 | 完成 | 集成者 |
+| T01 | 生态数据层 | 新 `src/ecology.js`、新 `test/ecology.test.mjs` | T00 | 0 | P0 | 进行中 | 林澈 / deepseek-v4.1-flash |
 | T02 | 2D 生态/植被渲染 | `src/render.js`、`index.html`、`styles.css` | T01 | 1 | P0 | 待领取 | — |
 | T03 | 3D 植被实例化 | `src/view3d.js` | T01 | 1 | P0 | 待领取 | — |
 | T04 | 城镇公共设施生成 | `src/town.js`、`test/town.test.mjs` | 无 | 1 | P0 | 待领取 | — |
