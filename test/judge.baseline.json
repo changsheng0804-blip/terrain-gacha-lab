@@ -1,0 +1,88 @@
+{
+  "quick": {
+    "matrix": {
+      "seeds": [
+        11,
+        22,
+        33
+      ],
+      "size": 6000,
+      "res": 256,
+      "consistency": {
+        "seeds": [
+          11
+        ],
+        "size": 4000,
+        "res": [
+          256,
+          512
+        ]
+      }
+    },
+    "rules": {
+      "determinism": 0,
+      "hydro_sinks": 0,
+      "hydro_mass": 0,
+      "hydro_uphill": 0,
+      "island_rail_dry": 2,
+      "bld_on_road": 31.25,
+      "bld_overlap": 3.389830508474576,
+      "bld_on_rail": 0,
+      "bld_bad_site": 0.1737619461337967,
+      "bld_in_river": 22.65275707898659,
+      "station_rate": 100,
+      "road_connected": 87.28355518297536,
+      "road_dead_ends": 48.66635083279384,
+      "town_min_size": 160,
+      "town_stability": 0.49883452719332577,
+      "res_buildings": 0,
+      "res_rivers": 0.2657791369468238,
+      "res_core": 0.374257628313275
+    }
+  },
+  "full": {
+    "matrix": {
+      "seeds": [
+        11,
+        22,
+        33,
+        44,
+        55,
+        66
+      ],
+      "size": 6000,
+      "res": 256,
+      "consistency": {
+        "seeds": [
+          11,
+          22
+        ],
+        "size": 4000,
+        "res": [
+          512,
+          1024
+        ]
+      }
+    },
+    "rules": {
+      "determinism": 0,
+      "hydro_sinks": 0,
+      "hydro_mass": 0,
+      "hydro_uphill": 0,
+      "island_rail_dry": 4,
+      "bld_on_road": 36.708860759493675,
+      "bld_overlap": 3.389830508474576,
+      "bld_on_rail": 0,
+      "bld_bad_site": 0.1737619461337967,
+      "bld_in_river": 23.84206529992407,
+      "station_rate": 100,
+      "road_connected": 87.28355518297536,
+      "road_dead_ends": 48.64657044040981,
+      "town_min_size": 79,
+      "town_stability": 0.5851308554635161,
+      "res_buildings": 0,
+      "res_rivers": 0.17413535507159172,
+      "res_core": 0.058510778406613055
+    }
+  }
+}
