@@ -1,6 +1,6 @@
-import { MinHeap } from './hydrology.js?v=9';
-import { fbm2 } from './noise.js?v=9';
-import { clamp, randInt, range, rngFor } from './rng.js?v=9';
+import { distanceTransform, MinHeap } from './hydrology.js?v=19';
+import { fbm2 } from './noise.js?v=19';
+import { clamp, randInt, range, rngFor } from './rng.js?v=19';
 
 export const ZONE = {
   NONE: 0,
@@ -113,7 +113,7 @@ function findCenter(field, hydro) {
       if (hydro.seaMask[i]) continue;
 
       const h = height[i];
-      if (h > 360) continue;
+      if (h <= 1.5 || h > 360) continue;
 
       const slope = slopeAtIndex(field, i);
       const dRiver = hydro.dRiver[i] * cell;
@@ -130,7 +130,7 @@ function findCenter(field, hydro) {
 
   if (best < 0) {
     for (let i = 0; i < n * n; i += 3) {
-      if (!hydro.seaMask[i] && height[i] < 320) {
+      if (!hydro.seaMask[i] && height[i] > 1.5 && height[i] < 320) {
         best = i;
         break;
       }
@@ -429,32 +429,454 @@ function roadLength(road) {
   return length;
 }
 
-function dimensionsFor(zone, rng, distanceFromCenter, size) {
+function smoothPath(pts, passes = 1) {
+  let out = pts;
+  for (let p = 0; p < passes; p++) {
+    const next = [out[0]];
+    for (let i = 1; i < out.length - 1; i++) {
+      next.push([
+        (out[i - 1][0] + out[i][0] * 2 + out[i + 1][0]) / 4,
+        (out[i - 1][1] + out[i][1] * 2 + out[i + 1][1]) / 4,
+      ]);
+    }
+    next.push(out[out.length - 1]);
+    out = next;
+  }
+  return out;
+}
+
+function simplifyPath(pts, minDist) {
+  if (pts.length <= 3) return pts;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const last = out[out.length - 1];
+    if (Math.hypot(pts[i][0] - last[0], pts[i][1] - last[1]) >= minDist) {
+      out.push(pts[i]);
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+function polylineLength(pts) {
+  let length = 0;
+  for (let i = 1; i < pts.length; i++) {
+    length += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+  return length;
+}
+
+function distanceToPolyline(pts, x, z) {
+  let best = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, az] = pts[i - 1];
+    const [bx, bz] = pts[i];
+    const dx = bx - ax;
+    const dz = bz - az;
+    const len2 = dx * dx + dz * dz || 1;
+    const t = clamp(((x - ax) * dx + (z - az) * dz) / len2, 0, 1);
+    const d = Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+function pickStation(field, hydro, zones, center, pts, rng) {
+  let best = null;
+  let bestScore = Infinity;
+
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x, z] = pts[i];
+    const d = Math.hypot(x - center.x, z - center.z);
+    if (d < 60 || d > 800) continue;
+
+    const zone = zoneAt(field, zones, x, z);
+    if (zone === ZONE.WATER) continue;
+
+    const gi = indexAt(field, x, z);
+    const riverDist = hydro.dRiver[gi] * field.cell;
+    const riverPenalty = riverDist < 80 ? (80 - riverDist) / 80 * 2.5 : 0;
+
+    const h = sampleHeight(field, x, z);
+    if (h == null || h <= 1.2) continue;
+
+    const slope = slopeAt(field, x, z);
+    if (slope > 10) continue;
+
+    const zonePenalty = zone === ZONE.CORE ? 0
+      : zone === ZONE.RES ? 0.6
+        : zone === ZONE.IND ? 1.4
+          : zone === ZONE.HAMLET ? 1.8
+            : zone === ZONE.PADDY ? 2.0
+              : 3.0;
+    const score = slope * 0.8 + d / 120 + zonePenalty + riverPenalty;
+
+    if (score < bestScore) {
+      bestScore = score;
+      const [nx, nz] = pts[i + 1] || pts[i - 1];
+      best = {
+        x,
+        z,
+        angle: Math.atan2(nz - z, nx - x),
+        platformW: 70,
+        platformD: 14,
+        side: rng() < 0.5 ? -1 : 1,
+      };
+    }
+  }
+
+  if (best) return best;
+
+  const [x, z] = pts[0];
+  const [nx, nz] = pts[1] || [x + 1, z];
+  return {
+    x,
+    z,
+    angle: Math.atan2(nz - z, nx - x),
+    platformW: 70,
+    platformD: 14,
+    side: 1,
+  };
+}
+
+function oceanDistance(hydro, n) {
+  const ocean = new Uint8Array(n * n);
+  const queue = new Int32Array(n * n);
+  let head = 0;
+  let tail = 0;
+
+  const seed = (i) => {
+    if (hydro.seaMask[i] && !ocean[i]) {
+      ocean[i] = 1;
+      queue[tail++] = i;
+    }
+  };
+
+  for (let x = 0; x < n; x++) {
+    seed(x);
+    seed((n - 1) * n + x);
+  }
+  for (let y = 0; y < n; y++) {
+    seed(y * n);
+    seed(y * n + n - 1);
+  }
+
+  const steps = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  while (head < tail) {
+    const i = queue[head++];
+    const x = i % n;
+    const y = (i / n) | 0;
+    for (const [dx, dy] of steps) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+      const j = ny * n + nx;
+      if (!hydro.seaMask[j] || ocean[j]) continue;
+      ocean[j] = 1;
+      queue[tail++] = j;
+    }
+  }
+
+  return distanceTransform(ocean, n);
+}
+
+function traceRailway(field, hydro, zones, center, rng) {
+  if (center.index < 0) return null;
+
+  const { n, cell, height, x0, y0 } = field;
+  const count = n * n;
+  const cost = new Float32Array(count).fill(Infinity);
+  const prev = new Int32Array(count).fill(-1);
+  const done = new Uint8Array(count);
+  const heap = new MinHeap((a, b) => cost[a] - cost[b]);
+
+  // The town centre can sit on a low coastal cell. Start the rail at the
+  // nearest buildable land cell so it does not follow the river out to sea.
+  let start = center.index;
+  if (height[start] <= 1.2) {
+    const cx = start % n;
+    const cy = (start / n) | 0;
+    const search = Math.max(12, Math.floor(n * 0.14));
+    let bestDist = Infinity;
+
+    for (let dz = -search; dz <= search; dz++) {
+      for (let dx = -search; dx <= search; dx++) {
+        const x = cx + dx;
+        const z = cy + dz;
+        if (x < 0 || z < 0 || x >= n || z >= n) continue;
+        const j = z * n + x;
+        if (height[j] <= 1.5 || hydro.seaMask[j]) continue;
+        if (slopeAtIndex(field, j) > 15) continue;
+        const d = dx * dx + dz * dz;
+        if (d < bestDist) {
+          bestDist = d;
+          start = j;
+        }
+      }
+    }
+  }
+
+  cost[start] = 0;
+  heap.push(start);
+
+  const island = Boolean(field.terrain.island);
+  const mapSize = field.size || n * cell;
+  const oceanD = island ? oceanDistance(hydro, n) : null;
+  let goal = -1;
+  let fallback = -1;
+  let fallbackCost = Infinity;
+  let coastGoal = -1;
+  let coastCost = -Infinity;
+
+  while (heap.size > 0) {
+    const i = heap.pop();
+    if (done[i]) continue;
+    done[i] = 1;
+
+    const x = i % n;
+    const y = (i / n) | 0;
+    const boundary = x === 0 || y === 0 || x === n - 1 || y === n - 1;
+
+    if (boundary) {
+      if (!island && height[i] > 0.8) {
+        goal = i;
+        break;
+      }
+      if (cost[i] < fallbackCost) {
+        fallback = i;
+        fallbackCost = cost[i];
+      }
+    }
+
+    if (island && height[i] > 1.5 && oceanD[i] * cell < 160) {
+      const wx = x0 + x * cell;
+      const wz = y0 + y * cell;
+      const radial = Math.hypot(wx - center.x, wz - center.z);
+      if (radial > mapSize * 0.16 && cost[i] > coastCost) {
+        coastCost = cost[i];
+        coastGoal = i;
+      }
+    }
+
+    const c = cost[i];
+
+    for (const [dx, dy, dist] of NEIGHBORS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+
+      const j = ny * n + nx;
+      if (done[j]) continue;
+
+      const h = height[j];
+      const slope = slopeAtIndex(field, j);
+      const water = h <= 0.8 ? 1200 : 1;
+      const riverCross = hydro.dRiver[j] * cell < 18 ? 8 : 1;
+      const slopePenalty = 1 + Math.min(12, slope / 3.2);
+      const heightPenalty = 1 + Math.max(0, h - 240) / 200;
+      const step = cell * dist * water * riverCross * slopePenalty * heightPenalty;
+
+      if (c + step < cost[j]) {
+        cost[j] = c + step;
+        prev[j] = i;
+        heap.push(j);
+      }
+    }
+  }
+
+  if (island) {
+    goal = coastGoal >= 0 ? coastGoal : fallback;
+  } else if (goal < 0) {
+    goal = fallback;
+  }
+
+  if (goal < 0) return null;
+
+  const raw = [];
+  for (let i = goal; i !== -1; i = prev[i]) {
+    raw.push([x0 + (i % n) * cell, y0 + ((i / n) | 0) * cell]);
+    if (i === start) break;
+  }
+  raw.reverse();
+  if (raw.length < 5) return null;
+
+  let bridge = false;
+  for (const [x, z] of raw) {
+    const gi = indexAt(field, x, z);
+    const h = height[gi];
+    if (h <= 0.8 || hydro.dRiver[gi] * cell < 18) {
+      bridge = true;
+      break;
+    }
+  }
+
+  const pts = simplifyPath(smoothPath(raw, 2), Math.max(12, cell * 1.2));
+  if (pts.length < 2) return null;
+
+  const station = pickStation(field, hydro, zones, center, pts, rng);
+  return {
+    pts,
+    length: polylineLength(pts),
+    bridge,
+    station,
+  };
+}
+
+function parcelDimensions(zone, roadCls, rng) {
+  const street = roadCls === 'street';
+
+  if (zone === ZONE.CORE) {
+    return { w: range(rng, street ? 10 : 14, street ? 18 : 24), d: range(rng, 24, 40) };
+  }
+  if (zone === ZONE.RES) {
+    return { w: range(rng, street ? 10 : 13, street ? 18 : 22), d: range(rng, 22, 36) };
+  }
+  if (zone === ZONE.IND) {
+    return { w: range(rng, 26, 48), d: range(rng, 38, 64) };
+  }
+  if (zone === ZONE.HAMLET) {
+    return { w: range(rng, 18, 34), d: range(rng, 28, 48) };
+  }
+  return { w: range(rng, 30, 60), d: range(rng, 45, 80) };
+}
+
+function parcelOK(field, x, z, angle, w, d) {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const hw = w / 2;
+  const hd = d / 2;
+  const points = [
+    [0, 0],
+    [hw, hd], [-hw, hd], [hw, -hd], [-hw, -hd],
+    [hw, 0], [-hw, 0], [0, hd], [0, -hd],
+  ];
+
+  for (const [dx, dz] of points) {
+    const px = x + dx * cos - dz * sin;
+    const pz = z + dx * sin + dz * cos;
+    if (!inBounds(field, px, pz, field.cell)) return false;
+    const h = sampleHeight(field, px, pz);
+    if (h == null || h <= 1.0) return false;
+    if (slopeAt(field, px, pz) > 20) return false;
+  }
+
+  return true;
+}
+
+function buildParcels(field, hydro, zones, roads, railway, rng) {
+  const parcels = [];
+  const hash = new Map();
+  const maxParcels = 4200;
+  const railPts = railway ? railway.pts : null;
+  const station = railway ? railway.station : null;
+
+  const addParcel = (px, pz, angle, dims, zone, roadCls) => {
+    if (![ZONE.CORE, ZONE.RES, ZONE.IND, ZONE.PADDY, ZONE.HAMLET].includes(zone)) return false;
+    if (!parcelOK(field, px, pz, angle, dims.w, dims.d)) return false;
+    if (railPts && distanceToPolyline(railPts, px, pz) < 20 + Math.max(dims.w, dims.d) * 0.35) return false;
+    if (station && Math.hypot(px - station.x, pz - station.z) < Math.max(station.platformW, station.platformD) * 0.8) return false;
+
+    // Adjacent lots share a boundary; a footprint-sized radius would reject
+    // every neighbour along the same frontage.
+    const radius = Math.min(dims.w, dims.d) * 0.4;
+    if (overlaps(hash, px, pz, radius, 80)) return false;
+
+    parcels.push({
+      index: parcels.length,
+      x: px,
+      z: pz,
+      angle,
+      w: dims.w,
+      d: dims.d,
+      zone,
+      road: roadCls,
+      built: false,
+    });
+
+    const key = hashKey(px, pz, 80);
+    if (!hash.has(key)) hash.set(key, []);
+    hash.get(key).push({ x: px, z: pz, r: radius });
+    return true;
+  };
+
+  for (const road of roads) {
+    if (parcels.length >= maxParcels) break;
+
+    let travelled = 0;
+    let nextParcel = range(rng, 8, 16);
+
+    for (let i = 1; i < road.pts.length && parcels.length < maxParcels; i++) {
+      const [x0, z0] = road.pts[i - 1];
+      const [x1, z1] = road.pts[i];
+      const segLen = Math.hypot(x1 - x0, z1 - z0);
+      travelled += segLen;
+
+      if (travelled < nextParcel) continue;
+      travelled = 0;
+
+      const angle = Math.atan2(z1 - z0, x1 - x0);
+      const nx = -Math.sin(angle);
+      const nz = Math.cos(angle);
+
+      for (const side of [-1, 1]) {
+        const probeX = x1 + nx * side * (road.width / 2 + 8);
+        const probeZ = z1 + nz * side * (road.width / 2 + 8);
+        const probeZone = zoneAt(field, zones, probeX, probeZ);
+        if (![ZONE.CORE, ZONE.RES, ZONE.IND, ZONE.PADDY, ZONE.HAMLET].includes(probeZone)) continue;
+
+        const frontDims = parcelDimensions(probeZone, road.cls, rng);
+        const setback = range(rng, 2, 6);
+        const frontOffset = road.width / 2 + setback + frontDims.d / 2;
+        const frontX = x1 + nx * side * frontOffset;
+        const frontZ = z1 + nz * side * frontOffset;
+        const frontZone = zoneAt(field, zones, frontX, frontZ);
+        addParcel(frontX, frontZ, angle, frontDims, frontZone, road.cls);
+
+        // Urban blocks get a second row of back lots. This is the parcel-level
+        // equivalent of the depth seen in real block subdivision.
+        if ([ZONE.CORE, ZONE.RES, ZONE.IND].includes(probeZone)) {
+          const rearDims = parcelDimensions(probeZone, road.cls, rng);
+          const rearOffset = road.width / 2 + setback + frontDims.d
+            + range(rng, 3, 7) + rearDims.d / 2;
+          const rearX = x1 + nx * side * rearOffset;
+          const rearZ = z1 + nz * side * rearOffset;
+          const rearZone = zoneAt(field, zones, rearX, rearZ);
+          addParcel(rearX, rearZ, angle, rearDims, rearZone, road.cls);
+        }
+
+        nextParcel = frontDims.w + range(rng, 1, 5);
+      }
+    }
+  }
+
+  return parcels;
+}
+
+function dimensionsForParcel(zone, parcel, rng, distanceFromCenter, size) {
   if (zone === ZONE.CORE) {
     const centrality = 1 - clamp(distanceFromCenter / (size * 0.35), 0, 1);
     const floors = Math.max(2, Math.min(8, Math.round(2 + rng() * 6 * (0.35 + centrality * 0.65))));
     return {
-      w: range(rng, 10, 26),
-      d: range(rng, 10, 22),
+      w: clamp(parcel.w * range(rng, 0.55, 0.8), 8, 26),
+      d: clamp(parcel.d * range(rng, 0.45, 0.65), 8, 22),
       floors,
       type: rng() < 0.55 ? 'commercial' : 'apartment',
     };
   }
 
   if (zone === ZONE.RES) {
-    const floors = randInt(rng, 1, 3);
     return {
-      w: range(rng, 8, 16),
-      d: range(rng, 8, 15),
-      floors,
+      w: clamp(parcel.w * range(rng, 0.5, 0.75), 7, 16),
+      d: clamp(parcel.d * range(rng, 0.45, 0.65), 7, 15),
+      floors: randInt(rng, 1, 3),
       type: rng() < 0.16 ? 'apartment' : 'house',
     };
   }
 
   if (zone === ZONE.IND) {
     return {
-      w: range(rng, 20, 42),
-      d: range(rng, 16, 32),
+      w: clamp(parcel.w * range(rng, 0.65, 0.85), 18, 42),
+      d: clamp(parcel.d * range(rng, 0.55, 0.75), 14, 32),
       floors: randInt(rng, 1, 2),
       type: rng() < 0.6 ? 'warehouse' : 'industrial',
     };
@@ -462,16 +884,16 @@ function dimensionsFor(zone, rng, distanceFromCenter, size) {
 
   if (zone === ZONE.HAMLET) {
     return {
-      w: range(rng, 7, 13),
-      d: range(rng, 7, 11),
+      w: clamp(parcel.w * range(rng, 0.4, 0.6), 6, 13),
+      d: clamp(parcel.d * range(rng, 0.35, 0.55), 6, 11),
       floors: randInt(rng, 1, 2),
       type: rng() < 0.65 ? 'farmhouse' : 'house',
     };
   }
 
   return {
-    w: range(rng, 6, 10),
-    d: range(rng, 6, 9),
+    w: clamp(parcel.w * range(rng, 0.2, 0.35), 5, 10),
+    d: clamp(parcel.d * range(rng, 0.15, 0.3), 5, 9),
     floors: 1,
     type: 'farmhouse',
   };
@@ -504,9 +926,9 @@ function hashKey(x, z, cell = 60) {
   return `${Math.floor(x / cell)},${Math.floor(z / cell)}`;
 }
 
-function overlaps(hash, x, z, radius) {
-  const cx = Math.floor(x / 60);
-  const cz = Math.floor(z / 60);
+function overlaps(hash, x, z, radius, cell = 60) {
+  const cx = Math.floor(x / cell);
+  const cz = Math.floor(z / cell);
 
   for (let dz = -1; dz <= 1; dz++) {
     for (let dx = -1; dx <= 1; dx++) {
@@ -521,83 +943,76 @@ function overlaps(hash, x, z, radius) {
   return false;
 }
 
-function placeBuildings(field, center, zones, roads, rng) {
+function placeBuildings(field, zones, parcels, center, station, rng) {
   const buildings = [];
   const hash = new Map();
-  const maxBuildings = 2200;
+  const maxBuildings = 2400;
 
-  for (const road of roads) {
+  for (const parcel of parcels) {
     if (buildings.length >= maxBuildings) break;
 
-    const spacing = road.cls === 'arterial'
-      ? range(rng, 14, 24)
-      : road.cls === 'ring'
-        ? range(rng, 16, 26)
-        : range(rng, 10, 18);
+    let probability = 0;
+    if (parcel.zone === ZONE.CORE) probability = 0.92;
+    else if (parcel.zone === ZONE.RES) probability = 0.72;
+    else if (parcel.zone === ZONE.IND) probability = 0.55;
+    else if (parcel.zone === ZONE.HAMLET) probability = 0.38;
+    else if (parcel.zone === ZONE.PADDY) probability = 0.10;
 
-    let travelled = 0;
+    if (probability === 0 || rng() > probability) continue;
 
-    for (let i = 1; i < road.pts.length && buildings.length < maxBuildings; i++) {
-      const [x0, z0] = road.pts[i - 1];
-      const [x1, z1] = road.pts[i];
-      const segLen = Math.hypot(x1 - x0, z1 - z0);
-      travelled += segLen;
+    const distanceFromCenter = Math.hypot(parcel.x - center.x, parcel.z - center.z);
+    const dims = dimensionsForParcel(parcel.zone, parcel, rng, distanceFromCenter, field.size);
 
-      if (travelled < spacing) continue;
-      travelled = 0;
+    if (!footprintOK(field, parcel.x, parcel.z, parcel.angle, dims.w, dims.d)) continue;
 
-      const angle = Math.atan2(z1 - z0, x1 - x0);
-      const nx = -Math.sin(angle);
-      const nz = Math.cos(angle);
+    const radius = Math.hypot(dims.w, dims.d) / 2 * 0.82;
+    if (overlaps(hash, parcel.x, parcel.z, radius)) continue;
 
-      for (const side of [-1, 1]) {
-        const probeX = x1 + nx * side * 12;
-        const probeZ = z1 + nz * side * 12;
-        const zone = zoneAt(field, zones, probeX, probeZ);
+    const height = dims.floors * 3.2 + (dims.type === 'house' ? 1.5 : 0);
+    const building = {
+      x: parcel.x,
+      z: parcel.z,
+      angle: parcel.angle,
+      w: dims.w,
+      d: dims.d,
+      floors: dims.floors,
+      h: height,
+      type: dims.type,
+      zone: parcel.zone,
+      parcel: parcel.index,
+    };
 
-        let probability = 0;
-        if (zone === ZONE.CORE) probability = 0.90;
-        else if (zone === ZONE.RES) probability = 0.75;
-        else if (zone === ZONE.IND) probability = 0.55;
-        else if (zone === ZONE.HAMLET) probability = 0.40;
-        else if (zone === ZONE.PADDY) probability = 0.12;
+    buildings.push(building);
+    parcel.built = true;
 
-        if (probability === 0 || rng() > probability) continue;
+    const key = hashKey(parcel.x, parcel.z);
+    if (!hash.has(key)) hash.set(key, []);
+    hash.get(key).push({ x: parcel.x, z: parcel.z, r: radius });
+  }
 
-        const distanceFromCenter = Math.hypot(x1 - center.x, z1 - center.z);
-        const dims = dimensionsFor(zone, rng, distanceFromCenter, field.size);
-        const setback = range(rng, 2.5, 7.5);
-        const offset = road.width / 2 + setback + dims.d / 2;
-        const bx = x1 + nx * side * offset;
-        const bz = z1 + nz * side * offset;
+  if (station) {
+    const nx = -Math.sin(station.angle);
+    const nz = Math.cos(station.angle);
+    const offset = station.platformD + 12;
+    const bx = station.x + nx * station.side * offset;
+    const bz = station.z + nz * station.side * offset;
+    const zone = zoneAt(field, zones, bx, bz);
 
-        const centerZone = zoneAt(field, zones, bx, bz);
-        if (![ZONE.CORE, ZONE.RES, ZONE.IND, ZONE.HAMLET, ZONE.PADDY].includes(centerZone)) continue;
-
-        if (!footprintOK(field, bx, bz, angle, dims.w, dims.d)) continue;
-
-        const radius = Math.hypot(dims.w, dims.d) / 2 * 0.85;
-        if (overlaps(hash, bx, bz, radius)) continue;
-
-        const height = dims.floors * 3.2 + (dims.type === 'house' ? 1.5 : 0);
-        const building = {
-          x: bx,
-          z: bz,
-          angle,
-          w: dims.w,
-          d: dims.d,
-          floors: dims.floors,
-          h: height,
-          type: dims.type,
-          zone,
-        };
-
-        buildings.push(building);
-
-        const key = hashKey(bx, bz);
-        if (!hash.has(key)) hash.set(key, []);
-        hash.get(key).push({ x: bx, z: bz, r: radius });
-      }
+    if ([ZONE.CORE, ZONE.RES, ZONE.IND, ZONE.HAMLET, ZONE.PADDY].includes(zone)
+      && footprintOK(field, bx, bz, station.angle, 28, 12)
+      && !overlaps(hash, bx, bz, 15)) {
+      buildings.push({
+        x: bx,
+        z: bz,
+        angle: station.angle,
+        w: 28,
+        d: 12,
+        floors: 2,
+        h: 8,
+        type: 'station',
+        zone,
+        station: true,
+      });
     }
   }
 
@@ -612,7 +1027,16 @@ export function generateTown(field, hydro, seed) {
   const rng = rngFor(seed, `town:${field.terrain.id}`);
   const zoneResult = computeZones(field, hydro, rng);
   const roads = buildRoads(field, hydro, zoneResult.center, zoneResult.zones, rng);
-  const buildings = placeBuildings(field, zoneResult.center, zoneResult.zones, roads, rng);
+  const railway = traceRailway(field, hydro, zoneResult.zones, zoneResult.center, rng);
+  const parcels = buildParcels(field, hydro, zoneResult.zones, roads, railway, rng);
+  const buildings = placeBuildings(
+    field,
+    zoneResult.zones,
+    parcels,
+    zoneResult.center,
+    railway ? railway.station : null,
+    rng,
+  );
 
   let arterialKm = 0;
   let streetKm = 0;
@@ -622,17 +1046,29 @@ export function generateTown(field, hydro, seed) {
     else if (road.cls === 'street') streetKm += km;
   }
 
+  let builtParcels = 0;
+  for (const parcel of parcels) {
+    if (parcel.built) builtParcels++;
+  }
+
   return {
     zones: zoneResult.zones,
     zoneStats: zoneResult.stats,
     center: zoneResult.center,
     roads,
+    railway,
+    station: railway ? railway.station : null,
+    parcels,
     buildings,
     stats: {
       buildings: buildings.length,
       roads: roads.length,
       arterialKm,
       streetKm,
+      railKm: railway ? railway.length / 1000 : 0,
+      station: railway && railway.station ? 1 : 0,
+      parcels: parcels.length,
+      builtParcels,
       ...zoneResult.stats,
     },
   };

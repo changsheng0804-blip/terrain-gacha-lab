@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Terrain Gacha Lab — 程序化地形实验</title>
-  <link rel="stylesheet" href="styles.css?v=20261021b">
+  <link rel="stylesheet" href="styles.css?v=20261021c">
 </head>
 <body>
   <header class="top">
@@ -32,6 +32,8 @@
             <option value="river">河谷</option>
             <option value="slope">海岸坡地</option>
             <option value="onsen">山间温泉谷</option>
+            <option value="fjord">峡湾海岸</option>
+            <option value="caldera">火山口岛</option>
           </select>
         </label>
 
@@ -91,6 +93,8 @@
           <span><i style="background:#6eaa60"></i>农田</span>
           <span><i style="background:#b082c4"></i>工业</span>
           <span><i style="background:#baa68e"></i>集落</span>
+          <span><i class="rail"></i>铁路/车站</span>
+          <span><i class="parcel"></i>地块</span>
         </div>
         <p class="hint" id="hint">鼠标移到画布上查看高度、坡度、汇流量与分区。</p>
       </section>
@@ -116,6 +120,6 @@
     </section>
   </main>
 
-  <script type="module" src="src/main.js?v=23"></script>
+  <script type="module" src="src/main.js?v=43"></script>
 </body>
 </html>

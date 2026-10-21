@@ -1,5 +1,5 @@
-import { clamp } from './rng.js?v=9';
-import { ZONE, ZONE_COLORS } from './town.js?v=9';
+import { clamp } from './rng.js?v=19';
+import { ZONE, ZONE_COLORS } from './town.js?v=23';
 
 function mix(a, b, t) {
   return [
@@ -157,20 +157,20 @@ function strokePath(ctx, pts, project) {
   ctx.stroke();
 }
 
-function drawRiverPaths(ctx, paths, maxAcc, project, scale) {
+function drawRiverPaths(ctx, paths, maxAcc, project, scale, maxWidth = 46) {
   if (paths.length === 0) return;
 
   paths.sort((a, b) => a.acc - b.acc);
 
   ctx.save();
-  ctx.lineCap = 'round';
+  ctx.lineCap = 'butt';
   ctx.lineJoin = 'round';
 
   // Dark channel base, so the river sits inside the terrain rather than on top.
   for (const path of paths) {
     const width = (1.1 + 4.0 * Math.sqrt(Math.max(1, path.acc) / maxAcc)) * scale;
     ctx.strokeStyle = 'rgba(26, 70, 98, 0.38)';
-    ctx.lineWidth = width * 2.0;
+    ctx.lineWidth = Math.min(width * 2.0, maxWidth * 1.6);
     strokePath(ctx, path.pts, project);
   }
 
@@ -178,7 +178,7 @@ function drawRiverPaths(ctx, paths, maxAcc, project, scale) {
   for (const path of paths) {
     const width = (0.8 + 3.4 * Math.sqrt(Math.max(1, path.acc) / maxAcc)) * scale;
     ctx.strokeStyle = 'rgba(92, 172, 218, 0.78)';
-    ctx.lineWidth = Math.max(1, width);
+    ctx.lineWidth = Math.max(1, Math.min(width, maxWidth));
     strokePath(ctx, path.pts, project);
   }
 
@@ -186,7 +186,7 @@ function drawRiverPaths(ctx, paths, maxAcc, project, scale) {
   for (const path of paths) {
     const width = (0.4 + 1.4 * Math.sqrt(Math.max(1, path.acc) / maxAcc)) * scale;
     ctx.strokeStyle = 'rgba(178, 226, 244, 0.30)';
-    ctx.lineWidth = Math.max(0.8, width);
+    ctx.lineWidth = Math.max(0.8, Math.min(width, maxWidth * 0.5));
     strokePath(ctx, path.pts, project);
   }
 
@@ -256,7 +256,7 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
           rgb = flowColor(t);
         }
       } else if (view === 'town') {
-        rgb = sea ? [8, 14, 20] : mix([28, 32, 38], heightColor(h), 0.18);
+        rgb = sea ? [14, 32, 46] : mix([28, 32, 38], heightColor(h), 0.18);
         shadeFactor = 0.85;
       } else {
         rgb = heightColor(h);
@@ -332,7 +332,14 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
     ctx.save();
     if (view === 'flow') ctx.globalAlpha = 0.68;
     else if (view === 'town') ctx.globalAlpha = 0.55;
-    drawRiverPaths(ctx, paths, hydro.maxAcc, projectRiver, pixelPerGrid);
+    drawRiverPaths(
+      ctx,
+      paths,
+      hydro.maxAcc,
+      projectRiver,
+      pixelPerGrid,
+      view === 'town' ? 20 : 46,
+    );
     ctx.restore();
   }
 
@@ -354,7 +361,18 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
 }
 
 function computeTownView(field, town) {
-  const c = town.center;
+  let c = town.center;
+
+  if (town.buildings.length > 0) {
+    let cx = 0;
+    let cz = 0;
+    for (const b of town.buildings) {
+      cx += b.x;
+      cz += b.z;
+    }
+    c = { x: cx / town.buildings.length, z: cz / town.buildings.length };
+  }
+
   const dists = town.buildings
     .map((b) => Math.hypot(b.x - c.x, b.z - c.z))
     .sort((a, b) => a - b);
@@ -382,7 +400,144 @@ const BUILDING_COLORS = {
   industrial: [160, 138, 172],
   warehouse: [142, 152, 162],
   farmhouse: [184, 164, 132],
+  station: [232, 190, 110],
 };
+
+function drawParcels(ctx, parcels, sx, sz, scale, view, outN) {
+  if (!parcels || view !== 'town') return;
+
+  ctx.save();
+  ctx.lineWidth = 0.8;
+
+  for (const parcel of parcels) {
+    const px = sx(parcel.x);
+    const pz = sz(parcel.z);
+    if (px < -40 || pz < -40 || px > outN + 40 || pz > outN + 40) continue;
+
+    const w = parcel.w * scale;
+    const d = parcel.d * scale;
+    if (w < 2.5 || d < 2.5) continue;
+
+    const zc = ZONE_COLORS[parcel.zone];
+    ctx.save();
+    ctx.translate(px, pz);
+    ctx.rotate(parcel.angle);
+
+    if (zc) {
+      ctx.fillStyle = `rgba(${zc[0]},${zc[1]},${zc[2]},${parcel.built ? 0.02 : 0.05})`;
+      ctx.fillRect(-w / 2, -d / 2, w, d);
+    }
+
+    ctx.strokeStyle = 'rgba(235,240,230,0.14)';
+    ctx.strokeRect(-w / 2, -d / 2, w, d);
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function drawRailway(ctx, town, sx, sz, scale, view) {
+  const rail = town.railway;
+  if (!rail || rail.pts.length < 2) return;
+
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const line = (pts, width, color) => {
+    ctx.beginPath();
+    ctx.moveTo(sx(pts[0][0]), sz(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) {
+      ctx.lineTo(sx(pts[i][0]), sz(pts[i][1]));
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  };
+
+  const bedWidth = Math.max(view === 'town' ? 5.6 : 2.6, 9 * scale);
+  line(rail.pts, bedWidth, view === 'town' ? 'rgba(48,29,17,0.98)' : 'rgba(16,12,10,0.95)');
+
+  const offset = 1.6;
+  const left = [];
+  const right = [];
+
+  for (let i = 0; i < rail.pts.length; i++) {
+    const [x, z] = rail.pts[i];
+    const [px, pz] = i === 0 ? rail.pts[1] : rail.pts[i - 1];
+    const [nx, nz] = i === rail.pts.length - 1 ? rail.pts[i - 1] : rail.pts[i + 1];
+    let tx = nx - px;
+    let tz = nz - pz;
+    const len = Math.hypot(tx, tz) || 1;
+    tx /= len;
+    tz /= len;
+    left.push([x - tz * offset, z + tx * offset]);
+    right.push([x + tz * offset, z - tx * offset]);
+  }
+
+  const railColor = view === 'town' ? 'rgba(255,190,82,0.98)' : 'rgba(224,184,120,0.75)';
+  const railWidth = Math.max(view === 'town' ? 2.2 : 1.1, 1.7 * scale);
+  line(left, railWidth, railColor);
+  line(right, railWidth, railColor);
+
+  if (view === 'town') {
+    ctx.strokeStyle = 'rgba(255,222,164,0.9)';
+    ctx.lineWidth = 1.4;
+    let travelled = 0;
+
+    for (let i = 1; i < rail.pts.length; i++) {
+      const [ax, az] = rail.pts[i - 1];
+      const [bx, bz] = rail.pts[i];
+      const len = Math.hypot(bx - ax, bz - az);
+      travelled += len;
+      if (travelled < 10) continue;
+      travelled = 0;
+
+      const angle = Math.atan2(bz - az, bx - ax);
+      const nx = -Math.sin(angle);
+      const nz = Math.cos(angle);
+      ctx.beginPath();
+      ctx.moveTo(sx(bx + nx * 2.8), sz(bz + nz * 2.8));
+      ctx.lineTo(sx(bx - nx * 2.8), sz(bz - nz * 2.8));
+      ctx.stroke();
+    }
+  }
+
+  const station = town.station;
+  if (station) {
+    const nx = -Math.sin(station.angle);
+    const nz = Math.cos(station.angle);
+    const off = station.platformD / 2 + 4;
+    const px = sx(station.x + nx * (station.side || 1) * off);
+    const pz = sz(station.z + nz * (station.side || 1) * off);
+    const w = Math.max(3, station.platformW * scale);
+    const d = Math.max(2, station.platformD * scale);
+
+    ctx.save();
+    ctx.translate(px, pz);
+    ctx.rotate(station.angle);
+    ctx.fillStyle = 'rgba(255,199,98,0.96)';
+    ctx.strokeStyle = 'rgba(20,22,24,0.85)';
+    ctx.lineWidth = 1.2;
+    ctx.fillRect(-w / 2, -d / 2, w, d);
+    ctx.strokeRect(-w / 2, -d / 2, w, d);
+    ctx.fillStyle = 'rgba(120,60,24,0.95)';
+    ctx.fillRect(-w * 0.18, -d * 0.32, w * 0.36, d * 0.64);
+    ctx.restore();
+
+    if (view === 'town') {
+      ctx.save();
+      ctx.font = '700 14px ui-sans-serif, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(5,8,10,0.88)';
+      ctx.fillStyle = '#ffe2a6';
+      ctx.strokeText('駅', px, pz - d / 2 - 5);
+      ctx.fillText('駅', px, pz - d / 2 - 5);
+      ctx.restore();
+    }
+  }
+}
 
 function drawTown(ctx, field, town, outN, view, viewBounds) {
   const scale = outN / viewBounds.size;
@@ -392,6 +547,8 @@ function drawTown(ctx, field, town, outN, view, viewBounds) {
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+
+  drawParcels(ctx, town.parcels, sx, sz, scale, view, outN);
 
   for (const road of town.roads) {
     if (road.pts.length < 2) continue;
@@ -415,6 +572,8 @@ function drawTown(ctx, field, town, outN, view, viewBounds) {
       color = view === 'town' ? 'rgba(150,200,220,0.90)' : 'rgba(30,60,72,0.85)';
     }
 
+    ctx.lineCap = road.bridge ? 'butt' : 'round';
+
     const strokeRoad = () => {
       ctx.beginPath();
       ctx.moveTo(sx(road.pts[0][0]), sz(road.pts[0][1]));
@@ -434,6 +593,8 @@ function drawTown(ctx, field, town, outN, view, viewBounds) {
     ctx.lineWidth = Math.max(view === 'town' ? 2.0 : 1.6, road.width * scale * (view === 'town' ? 1.15 : 1));
     strokeRoad();
   }
+
+  drawRailway(ctx, town, sx, sz, scale, view);
 
   for (const b of town.buildings) {
     const px = sx(b.x);

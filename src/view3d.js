@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.module.js';
-import { ZONE_COLORS } from './town.js?v=9';
+import { ZONE_COLORS } from './town.js?v=23';
 
 // A modest vertical exaggeration makes 6 km-wide terrain read better from the
 // default camera distance without changing the underlying generator.
@@ -12,6 +12,7 @@ const TYPE_COLORS = {
   house: [214, 190, 156],
   warehouse: [150, 160, 158],
   barn: [166, 104, 74],
+  station: [242, 246, 250],
 };
 
 function clamp(v, lo, hi) {
@@ -442,6 +443,198 @@ export function create3DView(canvas) {
     world.add(mesh);
   }
 
+  function buildRailway() {
+    const rail = town && town.railway;
+    if (!rail || rail.pts.length < 2) return;
+
+    const ribbon = (pts, width, lift) => {
+      const positions = [];
+      const indices = [];
+
+      for (let i = 0; i < pts.length; i++) {
+        const [x, z] = pts[i];
+        const [px, pz] = i === 0 ? pts[1] : pts[i - 1];
+        const [nx, nz] = i === pts.length - 1 ? pts[i - 1] : pts[i + 1];
+        let tx = nx - px;
+        let tz = nz - pz;
+        const len = Math.hypot(tx, tz) || 1;
+        tx /= len;
+        tz /= len;
+
+        const ox = -tz * width / 2;
+        const oz = tx * width / 2;
+        const h = heightAt(x, z);
+        const y = Math.max(h == null ? 0 : h, 0.3) + lift;
+
+        positions.push(x + ox, y, z + oz, x - ox, y, z - oz);
+      }
+
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = i * 2;
+        const b = a + 1;
+        const c = a + 2;
+        const d = a + 3;
+        indices.push(a, c, b, b, c, d);
+      }
+
+      return { positions, indices };
+    };
+
+    const makeMesh = (data, mat, overlay = false) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(data.positions, 3));
+      geo.setIndex(data.indices);
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.receiveShadow = !overlay;
+      mesh.castShadow = !overlay;
+      mesh.renderOrder = overlay ? 20 : 3;
+      if (overlay) {
+        mat.depthTest = false;
+        mat.transparent = true;
+      }
+      world.add(mesh);
+    };
+
+    const ballast = ribbon(rail.pts, 11, 0.45);
+    makeMesh(ballast, new THREE.MeshStandardMaterial({
+      color: 0x39352e,
+      roughness: 0.96,
+      metalness: 0,
+    }));
+
+    // A dark outline plus a pale spine keeps the line legible over both
+    // green terrain and the amber roofs of the town.
+    makeMesh(ribbon(rail.pts, 12, 0.60), new THREE.MeshBasicMaterial({
+      color: 0x2a2118,
+      opacity: 0.5,
+    }), true);
+    makeMesh(ribbon(rail.pts, 5, 0.63), new THREE.MeshBasicMaterial({
+      color: 0xffeec2,
+      opacity: 0.95,
+    }), true);
+
+    const left = [];
+    const right = [];
+    const offset = 1.7;
+    for (let i = 0; i < rail.pts.length; i++) {
+      const [x, z] = rail.pts[i];
+      const [px, pz] = i === 0 ? rail.pts[1] : rail.pts[i - 1];
+      const [nx, nz] = i === rail.pts.length - 1 ? rail.pts[i - 1] : rail.pts[i + 1];
+      let tx = nx - px;
+      let tz = nz - pz;
+      const len = Math.hypot(tx, tz) || 1;
+      tx /= len;
+      tz /= len;
+      left.push([x - tz * offset, z + tx * offset]);
+      right.push([x + tz * offset, z - tx * offset]);
+    }
+
+    const railMat = new THREE.MeshStandardMaterial({
+      color: 0xffe0a0,
+      emissive: 0x4a2100,
+      emissiveIntensity: 0.25,
+      roughness: 0.38,
+      metalness: 0.35,
+    });
+    makeMesh(ribbon(left, 1.0, 0.8), railMat);
+    makeMesh(ribbon(right, 1.0, 0.8), railMat);
+
+    const tieCount = Math.max(1, Math.min(1200, Math.floor(rail.length / 12)));
+    const tieGeo = new THREE.BoxGeometry(1, 1, 1);
+    tieGeo.translate(0, 0.5, 0);
+    const tieMat = new THREE.MeshStandardMaterial({ color: 0x4b3d2f, roughness: 0.95 });
+    const ties = new THREE.InstancedMesh(tieGeo, tieMat, tieCount);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const pos = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+    const axisY = new THREE.Vector3(0, 1, 0);
+
+    let travelled = 0;
+    let tieIndex = 0;
+    let seg = 1;
+
+    while (tieIndex < tieCount && seg < rail.pts.length) {
+      const [ax, az] = rail.pts[seg - 1];
+      const [bx, bz] = rail.pts[seg];
+      const segLen = Math.hypot(bx - ax, bz - az);
+      const need = 12 - travelled;
+
+      if (segLen >= need) {
+        const t = need / segLen;
+        const x = ax + (bx - ax) * t;
+        const z = az + (bz - az) * t;
+        const angle = Math.atan2(bz - az, bx - ax);
+        const h = heightAt(x, z);
+        const y = Math.max(h == null ? 0 : h, 0.3) + 0.68;
+
+        q.setFromAxisAngle(axisY, -angle);
+        pos.set(x, y, z);
+        scale.set(4.6, 0.22, 0.9);
+        m.compose(pos, q, scale);
+        ties.setMatrixAt(tieIndex++, m);
+
+        travelled = 0;
+      } else {
+        travelled += segLen;
+        seg++;
+      }
+    }
+
+    ties.count = tieIndex;
+    ties.instanceMatrix.needsUpdate = true;
+    ties.castShadow = true;
+    ties.receiveShadow = true;
+    world.add(ties);
+
+    const station = town.station;
+    if (station) {
+      const nx = -Math.sin(station.angle);
+      const nz = Math.cos(station.angle);
+      const off = station.platformD / 2 + 4;
+      const px = station.x + nx * (station.side || 1) * off;
+      const pz = station.z + nz * (station.side || 1) * off;
+      const h = heightAt(px, pz);
+
+      const platformGeo = new THREE.BoxGeometry(1, 1, 1);
+      platformGeo.translate(0, 0.5, 0);
+      const platformMat = new THREE.MeshStandardMaterial({
+        color: 0xd6c6a2,
+        roughness: 0.9,
+        metalness: 0,
+      });
+      const platform = new THREE.Mesh(platformGeo, platformMat);
+      platform.position.set(
+        px,
+        Math.max(h == null ? 0 : h, 0.3) + 0.4,
+        pz,
+      );
+      platform.rotation.y = -station.angle;
+      platform.scale.set(station.platformW, 0.8, station.platformD);
+      platform.receiveShadow = true;
+      platform.castShadow = true;
+      world.add(platform);
+
+      const markerGeo = new THREE.BoxGeometry(1, 1, 1);
+      markerGeo.translate(0, 0.5, 0);
+      const marker = new THREE.Mesh(
+        markerGeo,
+        new THREE.MeshBasicMaterial({
+          color: 0xffd27a,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.95,
+        }),
+      );
+      marker.position.set(px, platform.position.y + 0.6, pz);
+      marker.rotation.y = -station.angle;
+      marker.scale.set(4, 14, 4);
+      marker.renderOrder = 21;
+      world.add(marker);
+    }
+  }
+
   function buildBuildings() {
     if (!showTown || !town || town.buildings.length === 0) return;
 
@@ -498,7 +691,7 @@ export function create3DView(canvas) {
       const top = centerH + b.h * BUILDING_HEIGHT_SCALE;
       const wallH = Math.max(2, top - base);
 
-      q.setFromAxisAngle(axisY, a);
+      q.setFromAxisAngle(axisY, -a);
       pos.set(b.x, base, b.z);
       scale.set(b.w, wallH, b.d);
       m.compose(pos, q, scale);
@@ -609,6 +802,7 @@ export function create3DView(canvas) {
     buildTerrain();
     buildWater();
     buildRoads();
+    buildRailway();
     buildBuildings();
 
     if (reset) resetCamera();
@@ -693,6 +887,16 @@ export function create3DView(canvas) {
     capture,
     resetCamera,
     resize,
+    debug: () => ({
+      worldChildren: world ? world.children.length : 0,
+      railway: town && town.railway
+        ? { points: town.railway.pts.length, station: town.station }
+        : null,
+      amberMeshes: world
+        ? world.children.filter((o) => o.isMesh && o.material
+          && o.material.color && o.material.color.getHex() === 0xe09a35).length
+        : 0,
+    }),
     get ready() { return Boolean(field); },
   };
 }

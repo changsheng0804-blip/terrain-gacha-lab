@@ -1,5 +1,5 @@
-import { range, randInt, rngFor, smoothstep, smin } from './rng.js?v=9';
-import { fbm2, ridged2 } from './noise.js?v=9';
+import { range, randInt, rngFor, smoothstep, smin } from './rng.js?v=13';
+import { fbm2, ridged2 } from './noise.js?v=13';
 
 function makeSeeds(rng) {
   return {
@@ -234,7 +234,218 @@ const onsen = {
   },
 };
 
-export const TERRAINS = { river, slope, onsen };
+/**
+ * Curved centreline of the main fjord channel. v is the inland coordinate.
+ */
+function fjordCenter(v, p) {
+  return p.fjordU
+    + p.fjordAmp1 * Math.sin(v * p.fjordFreq1 + p.fjordPhase1)
+    + p.fjordAmp2 * Math.sin(v * p.fjordFreq2 + p.fjordPhase2);
+}
+
+const fjord = {
+  id: 'fjord',
+  label: 'フィヨルド',
+  hasSea: true,
+  tune: { droplets: 0.72, life: 32, radius: 3, talus: 34, soft: 0.3, minA: 150000 },
+
+  params(rng) {
+    const coastV = -range(rng, 900, 1450);
+    const fjordLen = range(rng, 2300, 3100);
+    const branches = [];
+    const branchCount = randInt(rng, 2, 3);
+    for (let i = 0; i < branchCount; i++) {
+      branches.push({
+        joinFrac: range(rng, 0.34, 0.72),
+        len: range(rng, 500, 1100),
+        slope: (rng() < 0.5 ? -1 : 1) * range(rng, 0.25, 0.8),
+        bend: range(rng, -220, 220),
+        widthFrac: range(rng, 0.45, 0.68),
+        depthFrac: range(rng, 0.45, 0.72),
+      });
+    }
+
+    return {
+      rotate: range(rng, 0, Math.PI * 2),
+      coastV,
+      coastWig: range(rng, 200, 380),
+      coastWig2: range(rng, 50, 140),
+      coastPhase1: range(rng, 0, Math.PI * 2),
+      coastPhase2: range(rng, 0, Math.PI * 2),
+      fjordU: range(rng, -380, 380),
+      fjordAmp1: range(rng, 180, 360),
+      fjordFreq1: range(rng, 0.34, 0.58) / 1000,
+      fjordPhase1: range(rng, 0, Math.PI * 2),
+      fjordAmp2: range(rng, 50, 120),
+      fjordFreq2: range(rng, 1.1, 1.9) / 1000,
+      fjordPhase2: range(rng, 0, Math.PI * 2),
+      fjordLen,
+      halfW: range(rng, 120, 195),
+      depth: range(rng, 65, 108),
+      wallGrad: range(rng, 1.15, 1.9),
+      mountainH: range(rng, 360, 700),
+      mountainStart: range(rng, 280, 620),
+      hillH: range(rng, 25, 70),
+      warp: range(rng, 60, 130),
+      branches,
+      ...makeSeeds(rng),
+    };
+  },
+
+  height(u, v, p) {
+    const coast = p.coastV
+      + p.coastWig * Math.sin(u / 5200 * Math.PI * 2 + p.coastPhase1)
+      + p.coastWig2 * Math.sin(u / 1700 * Math.PI * 2 + p.coastPhase2);
+    const d = v - coast;
+
+    // Open sea outside the coast. The fjord mouth is simply part of this sea.
+    if (d < 0) return Math.max(-70, d * 0.045);
+
+    const n1 = fbm2(u / 1350, v / 1350, 5, p.s1);
+    const n2 = ridged2(u / 1000, v / 1000, 5, p.s2);
+    const n3 = fbm2(u / 480, v / 480, 4, p.s3);
+
+    const inland = smoothstep(0, 1500, d);
+    const mountain = p.mountainH * smoothstep(p.mountainStart, p.mountainStart + 1900, d)
+      * (0.30 + 0.36 * (0.5 + 0.5 * n1) + 0.34 * n2 * n2);
+    const hills = p.hillH * inland * (0.5 + 0.5 * n3);
+
+    let h = 2 + 0.012 * d + mountain + hills;
+
+    const endV = p.coastV + p.fjordLen;
+    const endFade = 1 - smoothstep(endV - 520, endV, v);
+
+    // U-shaped trench: parabolic below the waterline, then a steep wall.
+    const du = Math.abs(u - fjordCenter(v, p));
+    const t = du / p.halfW;
+    let bed = t <= 1
+      ? -p.depth * (1 - t * t)
+      : (t - 1) * p.halfW * p.wallGrad;
+    bed += (1 - endFade) * 1400;
+
+    // Small side fjords branch off the main channel and shallow out inland.
+    for (const b of p.branches) {
+      const joinV = p.coastV + b.joinFrac * p.fjordLen;
+      if (v < joinV) continue;
+      const ds = v - joinV;
+      const center = fjordCenter(joinV, p) + b.slope * ds
+        + b.bend * Math.sin(Math.min(1.4, ds / b.len) * Math.PI);
+      const db = Math.abs(u - center);
+      const tb = db / (p.halfW * b.widthFrac);
+      const branchEnd = joinV + b.len;
+      const bEndFade = 1 - smoothstep(branchEnd - 300, branchEnd, v);
+      let bBed = tb <= 1
+        ? -p.depth * b.depthFrac * (1 - tb * tb)
+        : (tb - 1) * p.halfW * b.widthFrac * p.wallGrad;
+      bBed += (1 - bEndFade) * 900;
+      bed = Math.min(bed, bBed);
+    }
+
+    h = smin(h, bed, 20);
+
+    // Keep a thin beach strip so the shoreline reads cleanly, but never dam
+    // the fjord mouth where the channel must meet the open sea.
+    if (d < 90 && bed > 0) h = Math.max(h, 0.8 + 0.02 * d);
+    return h;
+  },
+};
+
+/**
+ * Radial helper for the volcanic island: low apron outside the crater rim.
+ */
+function calderaBody(r, p) {
+  return p.bodyH
+    * smoothstep(p.craterR * 0.9, p.craterR * 1.35, r)
+    * (1 - smoothstep(p.R * 0.62, p.R, r));
+}
+
+const caldera = {
+  id: 'caldera',
+  label: '火山島のカルデラ',
+  hasSea: true,
+  island: true,
+  tune: { droplets: 0.7, life: 32, radius: 3, talus: 36, soft: 0.3, minA: 120000 },
+
+  params(rng) {
+    const R = range(rng, 1250, 2200);
+    const gullies = [];
+    const gullyCount = randInt(rng, 5, 8);
+    const gullyPhase = range(rng, 0, Math.PI * 2);
+    for (let i = 0; i < gullyCount; i++) {
+      const major = i < 2;
+      gullies.push({
+        angle: gullyPhase + i / gullyCount * Math.PI * 2 + range(rng, -0.16, 0.16),
+        width: major ? range(rng, 0.12, 0.19) : range(rng, 0.07, 0.12),
+        depth: major ? range(rng, 34, 58) : range(rng, 12, 26),
+      });
+    }
+
+    return {
+      rotate: range(rng, 0, Math.PI * 2),
+      cx: range(rng, -420, 420),
+      cy: range(rng, -420, 420),
+      R,
+      craterR: range(rng, 300, Math.min(600, R * 0.45)),
+      lakeDepth: range(rng, 32, 70),
+      ringH: range(rng, 260, 520),
+      bodyH: range(rng, 55, 115),
+      rimW: range(rng, 150, 260),
+      detail: range(rng, 16, 30),
+      seaDepth: range(rng, 45, 90),
+      warp: range(rng, 25, 60),
+      gullies,
+      ...makeSeeds(rng),
+    };
+  },
+
+  height(u, v, p) {
+    const r = Math.hypot(u - p.cx, v - p.cy);
+    const craterR = p.craterR;
+    const rPeak = craterR + p.rimW * 0.55;
+
+    const rise = smoothstep(craterR * 0.98, rPeak, r);
+    const fall = 1 - smoothstep(rPeak, p.R * 0.98, r);
+    const body = calderaBody(r, p);
+    // Pick the ring amplitude so the crest lands near ringH above sea level.
+    const ringAmp = Math.max(0, p.ringH - calderaBody(rPeak, p));
+    const ring = ringAmp * rise * fall;
+
+    // Crater lake floor stays below sea level and keeps the rim steep.
+    const bowl = -p.lakeDepth * (1 - smoothstep(craterR * 0.55, craterR, r));
+
+    // Sea beyond the island; the radial profile dominates the noise.
+    const offshore = smoothstep(p.R * 0.985, p.R * 1.22, r);
+    const sea = -offshore * (p.seaDepth + Math.max(0, r - p.R) * 0.02);
+
+    const n1 = fbm2(u / 520, v / 520, 4, p.s1);
+    const n2 = ridged2(u / 380, v / 380, 3, p.s2);
+    const detailMask = smoothstep(craterR * 1.0, craterR * 1.2, r)
+      * (1 - smoothstep(p.R * 0.78, p.R * 0.97, r));
+    const detail = p.detail * (0.6 * n1 + 0.4 * (n2 * 2 - 1)) * detailMask;
+
+    let h = body + ring + bowl + sea + detail;
+
+    // Radial barrancas guide runoff down the outer cone without changing the
+    // island silhouette. They start just outside the crater rim.
+    const ang = Math.atan2(v - p.cy, u - p.cx);
+    let gully = 0;
+    for (const g of p.gullies) {
+      let da = Math.abs(ang - g.angle);
+      if (da > Math.PI) da = Math.PI * 2 - da;
+      gully += g.depth * Math.exp(-Math.pow(da / g.width, 2));
+    }
+    const gullyMask = smoothstep(craterR * 1.02, craterR * 1.18, r)
+      * (1 - smoothstep(p.R * 0.80, p.R * 0.97, r));
+    h -= gully * gullyMask;
+
+    // Never let detail noise open a breach through the crater rim or coast.
+    if (r > craterR * 1.05 && r < p.R * 0.9) h = Math.max(h, 1.5);
+    if (r <= craterR * 0.62) h = Math.min(h, -6);
+    return h;
+  },
+};
+
+export const TERRAINS = { river, slope, onsen, fjord, caldera };
 export const TERRAIN_IDS = Object.keys(TERRAINS);
 
 /**

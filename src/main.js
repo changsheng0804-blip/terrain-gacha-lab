@@ -1,10 +1,10 @@
-import { generateHeightField, carveValleyOutlet } from './terrains.js?v=9';
-import { erodeDroplets, thermalErosion, smoothField } from './erosion.js?v=9';
-import { buildHydrology } from './hydrology.js?v=9';
-import { renderTerrain } from './render.js?v=9';
-import { generateTown, ZONE_NAMES } from './town.js?v=9';
-import { rngFor } from './rng.js?v=9';
-import { create3DView } from './view3d.js?v=13';
+import { generateHeightField, carveValleyOutlet } from './terrains.js?v=19';
+import { erodeDroplets, thermalErosion, smoothField } from './erosion.js?v=19';
+import { buildHydrology } from './hydrology.js?v=19';
+import { renderTerrain } from './render.js?v=19';
+import { generateTown, ZONE_NAMES } from './town.js?v=23';
+import { rngFor } from './rng.js?v=19';
+import { create3DView } from './view3d.js?v=28';
 
 const $ = (id) => document.getElementById(id);
 
@@ -161,7 +161,15 @@ async function generate() {
     const renderInfo = renderTerrain(canvas, field, hydro, town, state.view, state.showTown);
     const { minH, maxH } = renderInfo;
     viewBounds = renderInfo.viewBounds;
-    window.__tgl = { field, hydro, town, state, timings, renderInfo };
+    window.__tgl = {
+      field,
+      hydro,
+      town,
+      state,
+      timings,
+      renderInfo,
+      get view3d() { return view3d; },
+    };
     updateStats(minH, maxH);
     const ok3d = syncMode(true);
     if (state.view !== '3d' || ok3d) setStatus(`完成 · ${fmt(timings.total)} ms`);
@@ -195,6 +203,8 @@ function updateStats(minH = 0, maxH = 0) {
     <span class="k">水文</span><span class="v">${fmt(timings.hydrology)} ms</span>
     <span class="k">建筑</span><span class="v">${fmt(town ? town.stats.buildings : 0)}</span>
     <span class="k">道路</span><span class="v">${fmt(town ? town.stats.roads : 0)} · ${town ? (town.stats.arterialKm + town.stats.streetKm).toFixed(1) : '0.0'} km</span>
+    <span class="k">铁路</span><span class="v">${town ? town.stats.railKm.toFixed(1) : '0.0'} km · ${town && town.stats.station ? '有车站' : '无车站'}</span>
+    <span class="k">地块</span><span class="v">${fmt(town ? town.stats.parcels : 0)}（已建 ${fmt(town ? town.stats.builtParcels : 0)}）</span>
     <span class="k">中心/住宅</span><span class="v">${town ? town.zoneStats.corePct.toFixed(1) : '0.0'}% / ${town ? town.zoneStats.resPct.toFixed(1) : '0.0'}%</span>
     <span class="k">城镇</span><span class="v">${fmt(timings.town || 0)} ms</span>
     <span class="k">总计</span><span class="v">${fmt(timings.total)} ms</span>
@@ -304,6 +314,21 @@ $('exportJson').addEventListener('click', () => {
     town: town ? {
       stats: town.stats,
       center: town.center,
+      railway: town.railway ? {
+        lengthKm: town.railway.length / 1000,
+        bridge: town.railway.bridge,
+        station: town.station,
+        points: town.railway.pts,
+      } : null,
+      parcels: town.parcels.map((p) => ({
+        x: Math.round(p.x * 10) / 10,
+        z: Math.round(p.z * 10) / 10,
+        angle: Math.round(p.angle * 1000) / 1000,
+        w: Math.round(p.w * 10) / 10,
+        d: Math.round(p.d * 10) / 10,
+        zone: p.zone,
+        built: p.built,
+      })),
       buildings: town.buildings,
     } : null,
     heightPreview: preview,

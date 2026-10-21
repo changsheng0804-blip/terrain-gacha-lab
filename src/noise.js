@@ -1,4 +1,4 @@
-import { hash2 } from './rng.js?v=9';
+import { hash2 } from './rng.js?v=13';
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
