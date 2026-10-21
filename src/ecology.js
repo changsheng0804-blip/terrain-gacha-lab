@@ -6,7 +6,7 @@
  * no mutation of the inputs.
  */
 
-import { clamp, rngFor, smoothstep } from './rng.js';
+import { clamp, rngFor, smoothstep } from './rng.js?v=19';
 
 export const BIOME = {
   WATER: 0,
@@ -259,13 +259,16 @@ export function buildEcology(field, hydro, town = null) {
         && !isBeach
         && (dRiverM < 520 || flowWet > 0.45);
 
-      // --- biome priority: water > beach > snow > rock > forest > wetland > grass
+      // --- biome priority: water > beach > snow > rock > wetland > forest > grass
+      // Wetland wins over forest on flat, wet floodplains; otherwise the
+      // FOREST branch would absorb every wetland candidate and WETLAND would
+      // never be visible.
       let b = BIOME.GRASS;
       if (isBeach) b = BIOME.BEACH;
       else if (sn > 0.5) b = BIOME.SNOW;
       else if (rk > 0.55) b = BIOME.ROCK;
-      else if (fr > 0.45) b = BIOME.FOREST;
       else if (isWetland) b = BIOME.WETLAND;
+      else if (fr > 0.45) b = BIOME.FOREST;
       biome[i] = b;
       biomeCounts[b]++;
     }

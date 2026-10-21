@@ -49,6 +49,7 @@ function build(type, seed) {
 
 let builtCount = 0;
 let townCompared = 0;
+let wetlandTerrains = 0;
 const validBiomes = new Set(Object.values(BIOME));
 
 for (const type of TERRAIN_IDS) {
@@ -77,6 +78,7 @@ for (const type of TERRAIN_IDS) {
     assert.ok(Number.isFinite(value), `${label}: stats.${key} not finite`);
     assert.ok(value >= 0 && value <= 100, `${label}: stats.${key}=${value} outside 0..100`);
   }
+  if (ecology.stats.wetlandPct > 0) wetlandTerrains++;
 
   // Each cell has exactly one biome, so the reported percentages describe the
   // whole grid excluding water (which is tracked separately).
@@ -130,6 +132,18 @@ for (const type of TERRAIN_IDS) {
   assert.equal(hashArray(field.height), heightHash, `${label}: field.height mutated`);
   assert.equal(hashArray(hydro.acc), accHash, `${label}: hydro.acc mutated`);
   assert.equal(hashArray(town.zones), zoneHash, `${label}: town.zones mutated`);
+
+  // town is optional: the no-town path must not throw and must never have
+  // less canopy than the town-attenuated version.
+  const noTown = buildEcology(field, hydro);
+  assert.equal(noTown.forest.length, count, `${label}: no-town forest length`);
+  assertUnitRange(noTown.forest, `${label}.noTown.forest`);
+  for (let i = 0; i < count; i++) {
+    assert.ok(
+      noTown.forest[i] + 1e-6 >= ecology.forest[i],
+      `${label}: no-town forest[${i}] below town-attenuated forest`,
+    );
+  }
 
   // Near-water lowland forest vs dry, high, far-from-river ground.
   let nearSum = 0;
@@ -193,6 +207,7 @@ for (const type of TERRAIN_IDS) {
 
 assert.equal(builtCount, TERRAIN_IDS.length, 'all terrains should build');
 assert.ok(townCompared >= 3, 'expected a meaningful town/open comparison on most terrains');
+assert.ok(wetlandTerrains > 0, 'expected at least one terrain with visible wetland');
 
 // Different seeds must change the ecology on at least one terrain (and the
 // same seed must stay stable, already asserted above).
