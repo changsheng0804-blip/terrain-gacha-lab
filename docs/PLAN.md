@@ -416,6 +416,7 @@ T01 完成前，T02/T03 不启动。
 
 领取任务：Txx
 工作区：<worktree path> / 分支 <branch>
+先运行 scripts/claim-task.sh claim ...；认领失败就换任务。
 只修改任务卡列出的文件；不要改其他文件；不要 push/merge。
 可以在自己的 task/* 分支做本地 commit，但主分支只由集成者操作。
 先读规划和相关源码，再实现。

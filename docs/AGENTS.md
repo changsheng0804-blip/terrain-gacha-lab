@@ -58,6 +58,34 @@ git worktree add ../wt-T01 -b task/T01-ecology main
 - 集成者在主工作区按依赖顺序合并，不直接让 agent 改主分支。
 - 视觉 QA 只在集成工作区进行，避免多个开发服务器/端口混乱。
 
+### 4.1 认领锁
+
+`docs/ROADMAP.md` 是任务状态的唯一展示源；实际认领用共享 git 目录里的原子锁：
+
+```text
+<git-common-dir>/agent-claims/Txx/
+  agent  model  branch  worktree  status  claimed_at
+```
+
+命令：
+
+```bash
+scripts/claim-task.sh claim T01 <agent> <model> <branch> [worktree]
+scripts/claim-task.sh status T01 review
+scripts/claim-task.sh show T01
+scripts/claim-task.sh release T01
+scripts/claim-task.sh list
+```
+
+规则：
+
+- `claim` 用 `mkdir` 原子创建目录；失败说明已被别人认领，直接换任务。
+- 认领成功后，agent 才可以在自己的 worktree 里工作。
+- agent 只更新锁里的 `status`（`claimed` / `in_progress` / `review` / `blocked`），不直接改 `ROADMAP.md`。
+- 集成者审查后更新 `ROADMAP.md`，并在合入后 `release` 锁。
+- 超过 24 小时没有更新的锁视为 stale，由集成者确认后释放。
+- 锁目录在 `.git` 内，不进入工作区、不提交、不暴露到公开仓库。
+
 **提交权限**：子 agent 可以在自己的 `task/*` 分支做本地 commit，便于审查和 cherry-pick；但不得 push、不得合并主分支。主分支只由集成者操作。若某个任务不建分支，则通过 `git diff` / patch 交接。
 
 ## 5. 文件所有权与并发
@@ -100,6 +128,7 @@ git worktree add ../wt-T01 -b task/T01-ecology main
 
 领取任务：Txx <name>
 工作区：<worktree path> / 分支 <branch>
+先运行 scripts/claim-task.sh claim ...；认领失败就换任务。
 只修改任务卡列出的文件；不要改其他文件；不要 push/merge。
 先读任务卡、CONTRACTS 和相关源码，再实现。
 完成后报告：

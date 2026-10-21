@@ -1,4 +1,4 @@
-import { generateHeightField, carveValleyOutlet } from './terrains.js?v=19';
+import { generateHeightField, carveValleyOutlet } from './terrains.js?v=20';
 import { erodeDroplets, thermalErosion, smoothField } from './erosion.js?v=19';
 import { buildHydrology } from './hydrology.js?v=19';
 import { renderTerrain } from './render.js?v=19';

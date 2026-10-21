@@ -31,6 +31,25 @@
 | T11 | 导出扩展：heightmap/SVG/GLB | 新 `src/exporters.js`、`src/main.js`、`index.html`、`vendor/` | T09、T10 | 4 | P2 | 待领取 | — |
 | T12 | 测试/视觉检查/文档 | `test/*`、`scripts/*`、`README.md`、`docs/*` | 各任务 | 4 | P1 | 待领取 | — |
 
+> T08 的 UI 选项由 T02 在同一个 `index.html` 里一并加入，避免两个 agent 同时改 index。
+
+## 认领锁
+
+任务板只做展示；实际认领使用共享 git 目录中的原子锁：
+
+```bash
+scripts/claim-task.sh claim T01 <agent> <model> <branch> [worktree]
+scripts/claim-task.sh status T01 review
+scripts/claim-task.sh show T01
+scripts/claim-task.sh release T01
+scripts/claim-task.sh list
+```
+
+- `claim` 用原子 `mkdir`；失败就换一个 `ready` 任务。
+- agent 只更新锁里的状态，不直接改本文件。
+- 集成者合入后更新本文件并 `release` 锁。
+- 锁位于 `<git-common-dir>/agent-claims/`，不提交、不在工作区出现。
+
 ## 波次
 
 ### Wave 0

@@ -491,6 +491,7 @@ export function generateHeightField(type, seed, size, res) {
     height,
     params,
     terrain,
+    seed,
   };
 }
 
