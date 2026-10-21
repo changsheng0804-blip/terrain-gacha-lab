@@ -12,9 +12,11 @@
  * and town close-up), plus a judge overlay that outlines in red every building
  * touching a road. A summary.json is written next to the screenshots.
  *
- * Env: CHROME_PATH to override the browser binary, PORT for the static server.
+ * Env: CHROME_PATH to override the browser binary, PORT to pin the static
+ * server port (default: a free port, so it never collides with other agents).
  */
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,8 +32,13 @@ const OUT = path.resolve(arg('out', path.join(os.tmpdir(), `terrain-visual-${Dat
 const TYPES = arg('types', 'river,slope,onsen,fjord,caldera').split(',');
 const SEED = Number(arg('seed', '20261019'));
 const RES = arg('res', '512');
-const PORT = Number(process.env.PORT || 5199);
-const DEBUG_PORT = 9333 + Math.floor(Math.random() * 500);
+// Other agents may already run dev servers; always use a free port unless told.
+const freePort = () => new Promise((resolve) => {
+  const srv = net.createServer();
+  srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
+});
+const PORT = Number(process.env.PORT) || await freePort();
+const DEBUG_PORT = await freePort();
 const CHROME = process.env.CHROME_PATH
   || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium']
     .find((p) => fs.existsSync(p));
@@ -76,6 +83,14 @@ function cleanup() {
 }
 process.on('exit', cleanup);
 process.on('SIGINT', () => { cleanup(); process.exit(130); });
+
+// Make sure the server answering on PORT is ours (serves this worktree).
+await waitFor(async () => {
+  try {
+    const r = await fetch(`http://127.0.0.1:${PORT}/scripts/visual-check.mjs`, { method: 'HEAD' });
+    return r.ok;
+  } catch { return false; }
+}, 10000);
 
 /* ------------------------------ CDP -------------------------------- */
 
