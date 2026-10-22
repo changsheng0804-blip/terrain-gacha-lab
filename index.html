@@ -80,6 +80,7 @@
           <button data-view="height" type="button">高度</button>
           <button data-view="slope" type="button">坡度</button>
           <button data-view="flow" type="button">汇流</button>
+          <button data-view="reflex" type="button" title="三级级联反射层诊断透视">反射诊断</button>
           <button data-view="town" type="button">城镇</button>
           <button data-view="3d" type="button">3D</button>
         </div>
@@ -103,6 +104,11 @@
           <span><i class="eco-snow"></i>雪线</span>
           <span><i class="eco-wetland"></i>湿地</span>
           <span><i class="eco-beach"></i>沙滩</span>
+        </div>
+        <div class="legend reflex-legend" aria-label="反射诊断图例" id="reflexLegend" hidden>
+          <span><i style="background:#2ad272"></i>自洽健康 (&gt;0.2)</span>
+          <span><i style="background:#e4b230"></i>边缘疑难 (-0.15~0.2)</span>
+          <span><i style="background:#d63030"></i>病理违和 (&lt;-0.15)</span>
         </div>
         <p class="hint" id="hint">鼠标移到画布上查看高度、坡度、汇流量与分区。</p>
       </section>
@@ -133,6 +139,6 @@
     </section>
   </main>
 
-  <script type="module" src="src/main.js?v=46"></script>
+  <script type="module" src="src/main.js?v=47"></script>
 </body>
 </html>

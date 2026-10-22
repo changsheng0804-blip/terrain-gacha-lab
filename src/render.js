@@ -33,6 +33,23 @@ function flowColor(t) {
   return mix([74, 176, 214], [228, 247, 255], (t - 0.72) / 0.28);
 }
 
+function reflexColor(score) {
+  // score in [-1, +1]
+  // > +0.2: 绿色 (自洽健康)
+  // -0.15 .. +0.2: 黄色 (疑难/过渡)
+  // < -0.15: 猩红 (病理/违和)
+  if (score >= 0.2) {
+    const t = clamp((score - 0.2) / 0.5, 0, 1);
+    return mix([68, 168, 92], [42, 210, 114], t);
+  }
+  if (score >= -0.15) {
+    const t = clamp((score - (-0.15)) / 0.35, 0, 1);
+    return mix([228, 178, 48], [128, 188, 70], t);
+  }
+  const t = clamp((score - (-0.6)) / 0.45, 0, 1);
+  return mix([214, 48, 48], [228, 148, 54], t);
+}
+
 function shade(rgb, factor) {
   return [
     clamp(rgb[0] * factor, 0, 255),
@@ -259,6 +276,18 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
         } else {
           const t = clamp(Math.log1p(acc) / Math.log1p(hydro.maxAcc), 0, 1);
           rgb = flowColor(t);
+        }
+      } else if (view === 'reflex') {
+        // 反射层诊断视图：利用传入的 reflexHeatmap 双线性采样打分
+        if (field.__reflexHeatmap) {
+          const hm = field.__reflexHeatmap;
+          const u = clamp((worldX - field.x0) / field.size, 0, 1);
+          const v = clamp((worldY - field.y0) / field.size, 0, 1);
+          const s = sampleGrid(hm.scores, hm.cols, u * (hm.cols - 1), v * (hm.rows - 1));
+          rgb = reflexColor(s);
+          shadeFactor = 0.9;
+        } else {
+          rgb = [40, 50, 60];
         }
       } else if (view === 'town') {
         rgb = sea ? [14, 32, 46] : mix([28, 32, 38], heightColor(h), 0.18);

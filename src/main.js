@@ -1,12 +1,13 @@
 import { generateHeightField, carveValleyOutlet } from './terrains.js?v=20';
 import { erodeDroplets, thermalErosion, smoothField } from './erosion.js?v=19';
 import { buildHydrology } from './hydrology.js?v=20';
-import { renderTerrain } from './render.js?v=20';
+import { renderTerrain } from './render.js?v=21';
 import { generateTown, ZONE_NAMES } from './town.js?v=24';
 import { rngFor } from './rng.js?v=19';
 import { create3DView } from './view3d.js?v=30';
 import { createRecorder } from './timeline.js';
 import { buildTownReplay } from './town-replay.js';
+import { computeReflexHeatmap } from './reflex/heatmap.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -182,6 +183,14 @@ async function generate() {
       replay = null;
     }
 
+    // Compute Reflex Heatmap for Cognitive X-Ray View
+    try {
+      field.__reflexHeatmap = computeReflexHeatmap({ field, hydro, town, ecology: null }, 160);
+    } catch (e) {
+      console.warn('Reflex heatmap computation skipped:', e);
+      field.__reflexHeatmap = null;
+    }
+
     timings = {
       terrain: t1 - t0,
       erosion: t2 - t1,
@@ -239,6 +248,7 @@ function updateStats(minH = 0, maxH = 0) {
     <span class="k">地块</span><span class="v">${fmt(town ? town.stats.parcels : 0)}（已建 ${fmt(town ? town.stats.builtParcels : 0)}）</span>
     <span class="k">中心/住宅</span><span class="v">${town ? town.zoneStats.corePct.toFixed(1) : '0.0'}% / ${town ? town.zoneStats.resPct.toFixed(1) : '0.0'}%</span>
     <span class="k">城镇</span><span class="v">${fmt(timings.town || 0)} ms</span>
+    ${field && field.__reflexHeatmap ? `<span class="k">反射健康率</span><span class="v" style="color:${field.__reflexHeatmap.stats.healthyPct > 85 ? '#42d47e' : '#e4b230'}">${field.__reflexHeatmap.stats.healthyPct.toFixed(1)}%</span>` : ''}
     <span class="k">总计</span><span class="v">${fmt(timings.total)} ms</span>
   `;
 }
@@ -280,7 +290,19 @@ canvas.addEventListener('pointermove', (event) => {
   const acc = hydro.acc[i];
   const zone = town ? ZONE_NAMES[town.zones[i]] : '';
 
-  hoverEl.textContent = `x ${fmt(worldX)} m · y ${fmt(worldY)} m · 高度 ${h.toFixed(1)} m · 坡度 ${slope.toFixed(1)}° · 汇流 ${fmt(acc)}${zone ? ` · ${zone}` : ''}`;
+  let reflexTxt = '';
+  if (state.view === 'reflex' && field.__reflexHeatmap) {
+    const hm = field.__reflexHeatmap;
+    const u = Math.max(0, Math.min(1, (worldX - field.x0) / field.size));
+    const v = Math.max(0, Math.min(1, (worldY - field.y0) / field.size));
+    const ti = Math.min(hm.cols - 1, Math.floor(u * hm.cols));
+    const tj = Math.min(hm.rows - 1, Math.floor(v * hm.rows));
+    const s = hm.scores[tj * hm.cols + ti];
+    const status = s >= 0.2 ? '🟢 自洽健康' : s >= -0.15 ? '🟡 边缘疑难' : '🔴 违和病理';
+    reflexTxt = ` · 反射评分: ${s.toFixed(2)} (${status})`;
+  }
+
+  hoverEl.textContent = `x ${fmt(worldX)} m · y ${fmt(worldY)} m · 高度 ${h.toFixed(1)} m · 坡度 ${slope.toFixed(1)}° · 汇流 ${fmt(acc)}${zone ? ` · ${zone}` : ''}${reflexTxt}`;
 });
 
 function download(blob, filename) {
@@ -400,6 +422,11 @@ document.querySelectorAll('#views button').forEach((button) => {
     if (state.view === '3d') {
       if (syncMode(false)) setStatus(`3D · ${fmt(timings.total)} ms`);
       return;
+    }
+
+    const reflexLegend = $('reflexLegend');
+    if (reflexLegend) {
+      reflexLegend.hidden = (state.view !== 'reflex');
     }
 
     const info = renderTerrain(canvas, field, hydro, town, state.view, state.showTown);
