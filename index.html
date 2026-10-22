@@ -124,10 +124,15 @@
         <canvas id="canvas3d" width="512" height="512"></canvas>
         <div id="status" class="status">准备就绪</div>
         <div id="hover" class="hover"></div>
+        <div id="timelineBar" class="timeline-bar" hidden>
+          <button id="timelinePlay" class="timeline-btn" type="button" title="播放/暂停">▶ 演化</button>
+          <input id="timelineSlider" class="timeline-slider" type="range" min="0" max="1000" value="1000">
+          <span id="timelineLabel" class="timeline-label">100%</span>
+        </div>
       </div>
     </section>
   </main>
 
-  <script type="module" src="src/main.js?v=45"></script>
+  <script type="module" src="src/main.js?v=46"></script>
 </body>
 </html>

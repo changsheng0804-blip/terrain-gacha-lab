@@ -1110,6 +1110,79 @@ export function create3DView(canvas) {
     needsRender = true;
   }
 
+  // --- RFC-001 Timeline In-Place Playback Support ---
+  let timelineContext = null;
+
+  function initTimeline(recording, replay) {
+    if (!recording || !replay || !world) return;
+    const { n, cell, x0, y0 } = field;
+    const step = Math.max(1, Math.ceil(n / 512));
+    const cols = Math.floor((n - 1) / step) + 1;
+    const rows = cols;
+
+    // Find terrain mesh
+    let tMesh = null;
+    world.traverse((obj) => {
+      if (obj.isMesh && obj.geometry && obj.geometry.getAttribute('normal') && !obj.geometry.isBoxGeometry) {
+        if (!tMesh) tMesh = obj;
+      }
+    });
+
+    const H = new Float32Array(cols * rows);
+    const keys = recording.keys;
+    const bOrder = replay.events.filter((e) => e.kind === 'building' || e.kind === 'station');
+    const rOrder = replay.events.filter((e) => e.kind === 'arterial' || e.kind === 'street');
+    const bT = new Float32Array(bOrder.length);
+    bOrder.forEach((e, i) => { bT[i] = e.t; });
+    const rT = new Float32Array(rOrder.length);
+    rOrder.forEach((e, i) => { rT[i] = e.t; });
+
+    timelineContext = {
+      recording,
+      replay,
+      tMesh,
+      H,
+      cols,
+      rows,
+      step,
+      cell: cell * step,
+      x0,
+      y0,
+      bOrder,
+      rOrder,
+      bT,
+      rT,
+      lastTerrainKey: -1,
+    };
+  }
+
+  function setTimeline(u) {
+    if (!field || !world) return;
+    const TERRAIN_SHARE = 0.6;
+    const tu = Math.min(1, u / TERRAIN_SHARE);
+    const townU = Math.max(0, (u - TERRAIN_SHARE) / (1 - TERRAIN_SHARE));
+
+    // 1. Update buildings
+    if (townGroup && townGroup.children.length >= 3) {
+      const [walls, roofs, blobs] = townGroup.children;
+      const totalB = walls.instanceMatrix.count || (town ? town.buildings.length : 0);
+      const activeCount = u <= TERRAIN_SHARE ? 0 : Math.min(totalB, Math.ceil(totalB * townU));
+      walls.count = activeCount;
+      roofs.count = activeCount;
+      blobs.count = activeCount;
+      walls.instanceMatrix.needsUpdate = false;
+      roofs.instanceMatrix.needsUpdate = false;
+      blobs.instanceMatrix.needsUpdate = false;
+    }
+
+    // 2. Update trees
+    if (treeGroup) {
+      treeGroup.visible = (u >= TERRAIN_SHARE);
+    }
+
+    needsRender = true;
+  }
+
   function setShowTown(value) {
     showTown = value;
     if (townGroup) {
@@ -1184,6 +1257,8 @@ export function create3DView(canvas) {
     update,
     setActive,
     setShowTown,
+    initTimeline,
+    setTimeline,
     capture,
     resetCamera,
     resize,

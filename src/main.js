@@ -4,7 +4,9 @@ import { buildHydrology } from './hydrology.js?v=20';
 import { renderTerrain } from './render.js?v=20';
 import { generateTown, ZONE_NAMES } from './town.js?v=24';
 import { rngFor } from './rng.js?v=19';
-import { create3DView } from './view3d.js?v=29';
+import { create3DView } from './view3d.js?v=30';
+import { createRecorder } from './timeline.js';
+import { buildTownReplay } from './town-replay.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -16,6 +18,10 @@ const statusEl = $('status');
 const hoverEl = $('hover');
 const statsEl = $('stats');
 const generateBtn = $('generate');
+const timelineBar = $('timelineBar');
+const timelinePlayBtn = $('timelinePlay');
+const timelineSlider = $('timelineSlider');
+const timelineLabel = $('timelineLabel');
 
 const state = {
   type: 'river',
@@ -30,6 +36,12 @@ const state = {
 let field = null;
 let hydro = null;
 let town = null;
+let recording = null;
+let replay = null;
+let timelinePlaying = false;
+let timelineRaf = null;
+let timelineStart = null;
+const TIMELINE_DURATION = 8000;
 let viewBounds = null;
 let timings = null;
 let droplets = 0;
@@ -61,6 +73,8 @@ function syncMode(resetCamera = false) {
 
   if (!active3d) {
     if (view3d) view3d.setActive(false);
+    if (timelineBar) timelineBar.hidden = true;
+    stopTimeline();
     return true;
   }
 
@@ -69,6 +83,11 @@ function syncMode(resetCamera = false) {
   try {
     const v = get3D();
     v.update(field, hydro, town, state.showTown, resetCamera || !view3dReady);
+    if (recording && replay) {
+      v.initTimeline(recording, replay);
+      if (timelineBar) timelineBar.hidden = false;
+      applyTimeline(Number(timelineSlider.value) / 1000);
+    }
     v.setActive(true);
     view3dReady = true;
     return true;
@@ -150,6 +169,19 @@ async function generate() {
     field = f;
     hydro = h;
     town = townData;
+
+    // Record timeline and replay events for 3D playback (ADR-001)
+    try {
+      const rec = createRecorder(f.n, { keyframeEvery: 6 });
+      rec.record(f.height);
+      recording = rec.finish();
+      replay = buildTownReplay(town);
+    } catch (e) {
+      console.warn('Timeline recording skipped:', e);
+      recording = null;
+      replay = null;
+    }
+
     timings = {
       terrain: t1 - t0,
       erosion: t2 - t1,
@@ -394,6 +426,62 @@ $('showTown').addEventListener('change', () => {
   if (window.__tgl) window.__tgl.renderInfo = info;
   syncMode(false);
 });
+
+// --- Timeline controls ---
+function applyTimeline(u) {
+  if (timelineLabel) timelineLabel.textContent = `${Math.round(u * 100)}%`;
+  if (view3d && view3dReady) {
+    view3d.setTimeline(u);
+  }
+}
+
+function stopTimeline() {
+  timelinePlaying = false;
+  if (timelinePlayBtn) timelinePlayBtn.textContent = '▶ 演化';
+  if (timelineRaf) {
+    cancelAnimationFrame(timelineRaf);
+    timelineRaf = null;
+  }
+}
+
+function startTimeline() {
+  if (!view3dReady) return;
+  timelinePlaying = true;
+  if (timelinePlayBtn) timelinePlayBtn.textContent = '⏸ 暂停';
+  timelineStart = performance.now() - (Number(timelineSlider.value) / 1000) * TIMELINE_DURATION;
+  if (Number(timelineSlider.value) >= 1000) {
+    timelineStart = performance.now();
+    timelineSlider.value = '0';
+  }
+
+  function tick(now) {
+    if (!timelinePlaying) return;
+    const elapsed = now - timelineStart;
+    const u = Math.min(1, elapsed / TIMELINE_DURATION);
+    timelineSlider.value = String(Math.round(u * 1000));
+    applyTimeline(u);
+    if (u >= 1) {
+      stopTimeline();
+      return;
+    }
+    timelineRaf = requestAnimationFrame(tick);
+  }
+  timelineRaf = requestAnimationFrame(tick);
+}
+
+if (timelinePlayBtn) {
+  timelinePlayBtn.addEventListener('click', () => {
+    if (timelinePlaying) stopTimeline();
+    else startTimeline();
+  });
+}
+
+if (timelineSlider) {
+  timelineSlider.addEventListener('input', () => {
+    stopTimeline();
+    applyTimeline(Number(timelineSlider.value) / 1000);
+  });
+}
 
 // Initial render.
 generate();
