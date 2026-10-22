@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.module.js';
-import { ZONE_COLORS } from './town.js?v=23';
+import { ZONE_COLORS } from './town.js?v=24';
 
 // A modest vertical exaggeration makes 6 km-wide terrain read better from the
 // default camera distance without changing the underlying generator.

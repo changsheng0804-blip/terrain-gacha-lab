@@ -2,7 +2,7 @@ import { generateHeightField, carveValleyOutlet } from './terrains.js?v=20';
 import { erodeDroplets, thermalErosion, smoothField } from './erosion.js?v=19';
 import { buildHydrology } from './hydrology.js?v=19';
 import { renderTerrain } from './render.js?v=19';
-import { generateTown, ZONE_NAMES } from './town.js?v=23';
+import { generateTown, ZONE_NAMES } from './town.js?v=24';
 import { rngFor } from './rng.js?v=19';
 import { create3DView } from './view3d.js?v=28';
 

@@ -1,5 +1,5 @@
 import { clamp } from './rng.js?v=19';
-import { ZONE, ZONE_COLORS } from './town.js?v=23';
+import { ZONE, ZONE_COLORS } from './town.js?v=24';
 
 function mix(a, b, t) {
   return [

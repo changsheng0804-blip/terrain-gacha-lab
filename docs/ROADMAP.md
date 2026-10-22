@@ -30,6 +30,8 @@
 | T10 | 参数面板 + 分享链接 | `src/main.js`、`index.html`、`styles.css` | T02、T09 | 3 | P2 | 待领取 | — |
 | T11 | 导出扩展：heightmap/SVG/GLB | 新 `src/exporters.js`、`src/main.js`、`index.html`、`vendor/` | T09、T10 | 4 | P2 | 待领取 | — |
 | T12 | 测试/视觉检查/文档 | `test/*`、`scripts/*`、`README.md`、`docs/*` | 各任务 | 4 | P1 | 待领取 | — |
+| T13 | Judge：不变量评分 + 浏览器视觉检查 | 新 `test/judge*`、新 `scripts/visual-check.mjs`、新 `docs/judge.md` | 无 | 1 | P0 | 完成 | Hark |
+| T14 | 城镇统一占地约束（道路/铁路/河道/地块/建筑） | 新 `src/occupancy.js`、`src/town.js` | T13 | 1 | P0 | 完成 | Hark |
 
 > T08 的 UI 选项由 T02 在同一个 `index.html` 里一并加入，避免两个 agent 同时改 index。
 
