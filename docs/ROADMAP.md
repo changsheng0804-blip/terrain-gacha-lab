@@ -19,13 +19,13 @@
 |---|---|---|---|---|---|---|---|
 | T00 | 把 seed 存回 field | `src/terrains.js` | 无 | 0 | P0 | 完成 | 集成者 |
 | T01 | 生态数据层 | 新 `src/ecology.js`、新 `test/ecology.test.mjs` | T00 | 0 | P0 | 完成 | 林澈 / deepseek-v4.1-flash；审查 陈墨 / glm-5.3-flash |
-| T02 | 2D 生态/植被渲染 | `src/render.js`、`index.html`、`styles.css` | T01 | 1 | P0 | 已认领 | 许棠 / glm-5.3-flash |
-| T03 | 3D 植被实例化 | `src/view3d.js` | T01 | 1 | P0 | 已认领 | 顾原 / glm-5.3 |
-| T04 | 城镇公共设施生成 | `src/town.js`、`test/town.test.mjs` | 无 | 1 | P0 | 已认领 | 周岑 / qwen3.8-max |
+| T02 | 2D 生态/植被渲染 | `src/render.js`、`index.html`、`styles.css` | T01 | 1 | P0 | 完成 | 许棠 / glm-5.3-flash |
+| T03 | 3D 植被实例化 | `src/view3d.js` | T01 | 1 | P0 | 完成 | 顾原 / glm-5.3 |
+| T04 | 城镇公共设施生成 | `src/town.js`、`test/town.test.mjs` | 无 | 1 | P0 | 阻塞（provider quota） | 周岑 / qwen3.8-max |
 | T05 | 城镇设施 2D/3D 渲染 | `src/render.js`、`src/view3d.js` | T02、T03、T04 | 2 | P1 | 待领取 | — |
-| T06 | 水文升级：湖泊/河宽/瀑布 | `src/hydrology.js`、`test/smoke.test.mjs` | 无 | 1 | P1 | 已认领 | 宋澜 / qwen3.8-max |
+| T06 | 水文升级：湖泊/河宽/瀑布 | `src/hydrology.js`、`test/smoke.test.mjs` | 无 | 1 | P1 | 完成 | 宋澜 / qwen3.8-max |
 | T07 | 水体 2D/3D 渲染 | `src/render.js`、`src/view3d.js` | T05、T06 | 3 | P1 | 待领取 | — |
-| T08 | 地形包 II（castle/skyline/falls） | `src/terrains.js` | T00 | 1 | P1 | 已认领 | 秦川 / glm-5.3 |
+| T08 | 地形包 II（castle/skyline/falls） | `src/terrains.js` | T00 | 1 | P1 | 阻塞（provider quota） | 秦川 / glm-5.3 |
 | T09 | Web Worker 生成管线 | `src/main.js`、新 `src/pipeline.js`、新 `src/generate.worker.js` | T00 | 2 | P1 | 待领取 | — |
 | T10 | 参数面板 + 分享链接 | `src/main.js`、`index.html`、`styles.css` | T02、T09 | 3 | P2 | 待领取 | — |
 | T11 | 导出扩展：heightmap/SVG/GLB | 新 `src/exporters.js`、`src/main.js`、`index.html`、`vendor/` | T09、T10 | 4 | P2 | 待领取 | — |

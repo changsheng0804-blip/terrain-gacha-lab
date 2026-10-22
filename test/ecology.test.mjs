@@ -92,7 +92,7 @@ for (const type of TERRAIN_IDS) {
 
   // Water cells never carry forest; sea cells must be WATER biome.
   for (let i = 0; i < count; i++) {
-    if (field.height[i] <= 0 || hydro.seaMask[i]) {
+    if (field.height[i] <= 0 || hydro.seaMask[i] || (hydro.lakeMask && hydro.lakeMask[i])) {
       assert.equal(ecology.forest[i], 0, `${label}: forest at water cell ${i}`);
       assert.equal(ecology.biome[i], BIOME.WATER, `${label}: biome at water cell ${i}`);
     }

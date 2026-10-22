@@ -179,11 +179,13 @@ export function buildEcology(field, hydro, town = null) {
       const ridge = ridgeValue(height, n, i, x, y, relief);
       const dRiverM = hydro.dRiver[i] * cell;
       const dSeaM = hydro.dSea[i] * cell;
+      const dLakeM = hydro.dLake ? hydro.dLake[i] * cell : Infinity;
       const acc = hydro.acc ? hydro.acc[i] : 1;
 
       const isSea = hydro.seaMask ? hydro.seaMask[i] !== 0 : h <= 0;
+      const isLake = hydro.lakeMask ? hydro.lakeMask[i] !== 0 : false;
       const isRiver = hydro.riverMask ? hydro.riverMask[i] !== 0 : false;
-      const isWater = isSea || isRiver || h <= 0;
+      const isWater = isSea || isLake || isRiver || h <= 0;
       const j = jitter[i];
       const j01 = 0.5 + 0.5 * j;
 
@@ -206,12 +208,14 @@ export function buildEcology(field, hydro, town = null) {
       const lowSlope = 1 - smoothstep(6, 38, slope);
       const lowElev = 1 - smoothstep(0.55, 0.95, hRel);
       const coastWet = hasSea ? Math.exp(-dSeaM / 260) : 0;
+      const lakeWet = dLakeM < 1e6 ? Math.exp(-dLakeM / 220) : 0;
 
       let m = 0.34 * nearWater
         + 0.30 * Math.pow(flowWet, 0.65)
         + 0.16 * lowSlope
         + 0.12 * lowElev
-        + 0.08 * coastWet;
+        + 0.08 * coastWet
+        + 0.06 * lakeWet;
       m += (j01 - 0.5) * 0.16;
       m = clamp(m, 0, 1);
       moisture[i] = m;

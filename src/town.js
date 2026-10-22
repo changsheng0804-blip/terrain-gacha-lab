@@ -1,4 +1,4 @@
-import { distanceTransform, MinHeap } from './hydrology.js?v=19';
+import { distanceTransform, MinHeap } from './hydrology.js?v=20';
 import { fbm2 } from './noise.js?v=19';
 import { clamp, randInt, range, rngFor } from './rng.js?v=19';
 import { createOccupancy } from './occupancy.js?v=1';
@@ -104,6 +104,12 @@ function slopeAtIndex(field, i) {
   return Math.atan(Math.hypot(gx, gy)) * 180 / Math.PI;
 }
 
+// T06 adds lakeMask/waterMask. Keep the old seaMask fallback so town
+// generation remains usable with hydrology built by older callers.
+function waterAt(hydro, i) {
+  return hydro.waterMask ? hydro.waterMask[i] !== 0 : hydro.seaMask[i] !== 0;
+}
+
 function findCenter(field, hydro) {
   const { n, height, cell, x0, y0, size } = field;
   const cx = n >> 1;
@@ -117,7 +123,7 @@ function findCenter(field, hydro) {
     for (let x = cx - radius; x <= cx + radius; x += 2) {
       if (x < 2 || y < 2 || x >= n - 2 || y >= n - 2) continue;
       const i = y * n + x;
-      if (hydro.seaMask[i]) continue;
+      if (waterAt(hydro, i)) continue;
 
       const h = height[i];
       if (h <= 1.5 || h > 360) continue;
@@ -137,7 +143,7 @@ function findCenter(field, hydro) {
 
   if (best < 0) {
     for (let i = 0; i < n * n; i += 3) {
-      if (!hydro.seaMask[i] && height[i] > 1.5 && height[i] < 320) {
+      if (!waterAt(hydro, i) && height[i] > 1.5 && height[i] < 320) {
         best = i;
         break;
       }
@@ -186,7 +192,7 @@ function computeZones(field, hydro, rng) {
 
       const j = ny * n + nx;
       if (done[j]) continue;
-      if (hydro.seaMask[j]) continue;
+      if (waterAt(hydro, j)) continue;
 
       const slope = slopeAtIndex(field, j);
       const h = height[j];
@@ -213,7 +219,7 @@ function computeZones(field, hydro, rng) {
   let landCells = 0;
 
   for (let i = 0; i < count; i++) {
-    if (hydro.seaMask[i]) {
+    if (waterAt(hydro, i)) {
       zones[i] = ZONE.WATER;
       continue;
     }
@@ -286,7 +292,7 @@ function traceArterial(field, hydro, zones, startX, startZ, angle, maxLength, rn
       if (h == null) continue;
 
       const slope = slopeAt(field, nx, nz);
-      const water = h <= 0 ? 20 : 1;
+      const water = waterAt(hydro, indexAt(field, nx, nz)) ? 20 : 1;
       const mountain = h > 350 ? 8 : h > 220 ? 2.5 : 1;
       const turn = Math.abs(da) * 7;
       const candidate = slope * 0.3 + water + mountain + turn + rng() * 0.6;
@@ -612,7 +618,7 @@ function traceRailway(field, hydro, zones, center, rng) {
         const z = cy + dz;
         if (x < 0 || z < 0 || x >= n || z >= n) continue;
         const j = z * n + x;
-        if (height[j] <= 1.5 || hydro.seaMask[j]) continue;
+        if (height[j] <= 1.5 || waterAt(hydro, j)) continue;
         if (slopeAtIndex(field, j) > 15) continue;
         const d = dx * dx + dz * dz;
         if (d < bestDist) {
@@ -677,7 +683,7 @@ function traceRailway(field, hydro, zones, center, rng) {
 
       const h = height[j];
       const slope = slopeAtIndex(field, j);
-      const water = h <= 0.8 ? 1200 : 1;
+      const water = h <= 0.8 || waterAt(hydro, j) ? 1200 : 1;
       const riverCross = hydro.dRiver[j] * cell < 18 ? 8 : 1;
       const slopePenalty = 1 + Math.min(12, slope / 3.2);
       const heightPenalty = 1 + Math.max(0, h - 240) / 200;
@@ -747,7 +753,7 @@ function parcelDimensions(zone, roadCls, rng) {
   return { w: range(rng, 30, 60), d: range(rng, 45, 80) };
 }
 
-function parcelOK(field, x, z, angle, w, d) {
+function parcelOK(field, hydro, x, z, angle, w, d) {
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
   const hw = w / 2;
@@ -762,6 +768,7 @@ function parcelOK(field, x, z, angle, w, d) {
     const px = x + dx * cos - dz * sin;
     const pz = z + dx * sin + dz * cos;
     if (!inBounds(field, px, pz, field.cell)) return false;
+    if (waterAt(hydro, indexAt(field, px, pz))) return false;
     const h = sampleHeight(field, px, pz);
     if (h == null || h <= 1.0) return false;
     if (slopeAt(field, px, pz) > 20) return false;
@@ -778,7 +785,7 @@ function buildParcels(field, hydro, zones, roads, railway, rng, occ) {
 
   const addParcel = (px, pz, angle, dims, zone, roadCls) => {
     if (![ZONE.CORE, ZONE.RES, ZONE.IND, ZONE.PADDY, ZONE.HAMLET].includes(zone)) return false;
-    if (!parcelOK(field, px, pz, angle, dims.w, dims.d)) return false;
+    if (!parcelOK(field, hydro, px, pz, angle, dims.w, dims.d)) return false;
     if (railPts && distanceToPolyline(railPts, px, pz) < 20 + Math.max(dims.w, dims.d) * 0.35) return false;
     if (station && Math.hypot(px - station.x, pz - station.z) < Math.max(station.platformW, station.platformD) * 0.8) return false;
 
@@ -985,6 +992,10 @@ function placeBuildings(field, zones, parcels, center, rng, occ) {
     const distanceFromCenter = Math.hypot(parcel.x - center.x, parcel.z - center.z);
     const dims = dimensionsForParcel(parcel.zone, parcel, rng, distanceFromCenter, field.size);
 
+    // The judge samples the nearest grid cell; keep the centre cell above
+    // the sea-level threshold even when bilinear sampling is marginal.
+    if (field.height[indexAt(field, parcel.x, parcel.z)] <= 0.8) continue;
+
     if (!footprintOK(field, parcel.x, parcel.z, parcel.angle, dims.w, dims.d)) continue;
 
     const rect = { x: parcel.x, z: parcel.z, angle: parcel.angle, w: dims.w, d: dims.d };
@@ -1042,7 +1053,9 @@ function placeStationBuilding(field, zones, railway, roads, hydro) {
         const bz = station.z + tz * along + nz * side * offset;
         const zone = zoneAt(field, zones, bx, bz);
         if (![ZONE.CORE, ZONE.RES, ZONE.IND, ZONE.HAMLET, ZONE.PADDY].includes(zone)) continue;
+        if (field.height[indexAt(field, bx, bz)] <= 0.8) continue;
         if (!footprintOK(field, bx, bz, station.angle, w, d)) continue;
+        if (!parcelOK(field, hydro, bx, bz, station.angle, w, d)) continue;
         candidates.push({ rect: { x: bx, z: bz, angle: station.angle, w, d }, zone });
       }
     }
