@@ -35,19 +35,20 @@ function flowColor(t) {
 
 function reflexColor(score) {
   // score in [-1, +1]
-  // > +0.2: 绿色 (自洽健康)
-  // -0.15 .. +0.2: 黄色 (疑难/过渡)
-  // < -0.15: 猩红 (病理/违和)
-  if (score >= 0.2) {
-    const t = clamp((score - 0.2) / 0.5, 0, 1);
-    return mix([68, 168, 92], [42, 210, 114], t);
+  // 明显的高对比度热力图色彩：
+  // 正常自洽健康 (高分 >0.15): 纯正明亮的翠绿
+  // 边缘疑难过渡 (-0.1 .. 0.15): 鲜艳明亮的柠檬黄 / 金黄
+  // 违和病理异常 (低分 <-0.1): 高饱和度的朱红 / 亮红
+  if (score >= 0.15) {
+    const t = clamp((score - 0.15) / 0.45, 0, 1);
+    return mix([50, 205, 50], [0, 255, 128], t); // Lime to bright Spring Green
   }
-  if (score >= -0.15) {
-    const t = clamp((score - (-0.15)) / 0.35, 0, 1);
-    return mix([228, 178, 48], [128, 188, 70], t);
+  if (score >= -0.1) {
+    const t = clamp((score - (-0.1)) / 0.25, 0, 1);
+    return mix([255, 215, 0], [173, 255, 47], t); // Gold to YellowGreen
   }
-  const t = clamp((score - (-0.6)) / 0.45, 0, 1);
-  return mix([214, 48, 48], [228, 148, 54], t);
+  const t = clamp((score - (-0.6)) / 0.5, 0, 1);
+  return mix([255, 30, 30], [255, 140, 0], t); // Bright Red to DarkOrange
 }
 
 function shade(rgb, factor) {
@@ -281,11 +282,11 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
         // 反射层诊断视图：利用传入的 reflexHeatmap 双线性采样打分
         if (field.__reflexHeatmap) {
           const hm = field.__reflexHeatmap;
-          const u = clamp((worldX - field.x0) / field.size, 0, 1);
-          const v = clamp((worldY - field.y0) / field.size, 0, 1);
+          const u = clamp((wx - field.x0) / field.size, 0, 1);
+          const v = clamp((wz - field.y0) / field.size, 0, 1);
           const s = sampleGrid(hm.scores, hm.cols, u * (hm.cols - 1), v * (hm.rows - 1));
           rgb = reflexColor(s);
-          shadeFactor = 0.9;
+          shadeFactor = 1.0; // 不压暗，保证鲜艳明亮对比
         } else {
           rgb = [40, 50, 60];
         }
@@ -410,7 +411,7 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
     ctx.restore();
   }
 
-  if (showTown && town && (view === 'color' || view === 'town')) {
+  if (showTown && town && (view === 'color' || view === 'town' || view === 'reflex')) {
     drawTown(ctx, field, town, outN, view, viewBounds);
   }
 

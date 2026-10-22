@@ -13,9 +13,14 @@ const PROTO_HEALTHY = [
   0.1, 0.1, 0.12, 0.15, 0.0, 0.1, 0.5, 0.5, 0.0, 0.0, 0.4, 0.35, 0.4
 ];
 
-// 悬崖/积水/断崖病理原型
+// 悬崖/积水/断崖病理原型 (真正严重的病态：极陡峭绝壁上密集建城，或深水落水)
 const PROTO_PATHOLOGY = [
-  0.6, 0.8, 0.8, 0.9, 0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.1, 0.05
+  0.8, 1.0, 1.0, 1.0, 0.9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.9, 0.2, 0.05
+];
+
+// 自然荒野原型 (高山无人区或开阔海面，属于正常的自然环境，不是病态违和)
+const PROTO_WILD = [
+  0.5, 0.4, 0.5, 0.6, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 ];
 
 function cosineSim(a, b) {
@@ -55,8 +60,12 @@ export function computeReflexHeatmap(world, stepMeters = 150) {
       const feat = extractTileFeature(world, cx, cz, stepMeters * 0.8);
 
       const sH = cosineSim(feat.numericVector, PROTO_HEALTHY);
+      const sW = cosineSim(feat.numericVector, PROTO_WILD);
       const sP = cosineSim(feat.numericVector, PROTO_PATHOLOGY);
-      const score = sH - sP; // [-1, +1] 区间，>0 偏健康，<0 偏异常违和
+
+      // 如果是无建筑的纯自然荒野/深海，属于健康的自然态
+      const naturalScore = Math.max(sH, sW * 0.85);
+      const score = naturalScore - sP; // [-1, +1]
 
       const idx = j * cols + i;
       scores[idx] = score;
@@ -64,8 +73,8 @@ export function computeReflexHeatmap(world, stepMeters = 150) {
       if (score < minScore) minScore = score;
       if (score > maxScore) maxScore = score;
 
-      if (score >= 0.2) healthyCount++;
-      else if (score >= -0.15) warningCount++;
+      if (score >= 0.1) healthyCount++;
+      else if (score >= -0.2) warningCount++;
       else dangerCount++;
 
       tiles.push({
