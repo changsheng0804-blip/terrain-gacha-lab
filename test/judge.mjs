@@ -79,6 +79,8 @@ const RULES = [
     value: (d) => stats.max(d.worlds.map((w) => w.m.bld_in_river_pct)), op: '<=', limit: 0, better: 'lower' },
   { id: 'station_rate', kind: 'target', label: '有站房的世界比例 %',
     value: (d) => stats.mean(d.worlds.map((w) => w.m.station_building)) * 100, op: '>=', limit: 100, better: 'higher' },
+  { id: 'reflex_violations', kind: 'gate', label: '局部反射层违和切片（最多异常数）',
+    value: (d) => stats.max(d.worlds.map((w) => w.m.reflex_violations || 0)), op: '<=', limit: 0, better: 'lower' },
   { id: 'road_connected', kind: 'target', label: '道路主连通分量占总长（最差世界 %）',
     value: (d) => stats.min(d.worlds.map((w) => w.m.road_main_component_pct)), op: '>=', limit: 90, better: 'higher' },
   { id: 'road_dead_ends', kind: 'target', label: '道路断头端点比例（平均 %）',

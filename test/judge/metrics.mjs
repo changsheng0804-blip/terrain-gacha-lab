@@ -3,6 +3,7 @@ import {
 } from './geometry.mjs';
 
 import { riverHalfWidth } from '../../src/occupancy.js';
+import { extractTileFeature } from '../../src/reflex/extractor.js';
 
 const ZONE_NONE = 0;
 const ZONE_WATER = 6;
@@ -223,6 +224,16 @@ export function townMetrics(world) {
     for (const [x, z] of town.railway.pts) if (sampleH(field, x, z) <= 0.8) railWet++;
   }
 
+  // Reflex score: Sample core & hamlet tiles to detect unnatural patterns
+  let reflexViolations = 0;
+  if (town.center) {
+    const centerTile = extractTileFeature(world, town.center.x, town.center.z, 120);
+    // Center must not be excessively steep or flooded
+    if (centerTile.slopeMax > 28 || centerTile.waterPct > 0.45) {
+      reflexViolations++;
+    }
+  }
+
   return {
     buildings: blds.length,
     core_pct: town.zoneStats.corePct,
@@ -238,6 +249,7 @@ export function townMetrics(world) {
     road_over_water_m: wetRoad,
     rail_km: town.railway ? town.railway.length / 1000 : 0,
     rail_wet_points: railWet,
+    reflex_violations: reflexViolations,
   };
 }
 
