@@ -8,19 +8,56 @@
 
 import { extractTileFeature } from './extractor.js';
 
-// 理想宜居自洽原型
-const PROTO_HEALTHY = [
-  0.1, 0.1, 0.12, 0.15, 0.0, 0.1, 0.5, 0.5, 0.0, 0.0, 0.4, 0.35, 0.4
+// 1. 理想宜居平原/山地谷地城镇原型
+const PROTO_TOWN = [
+  0.3,  // 兼顾海平原与山地温泉谷 (0~400m)
+  0.12, // 局部适度高差
+  0.12, // 坡度缓和 (~4°)
+  0.18, // 最大坡度
+  0.05, // 允许适度临水
+  0.15, // 临河
+  0.5, 0.5, 0.0, 0.0, // CORE/RES 分区
+  0.5,  // 建筑密度
+  0.4,  // 建筑层数
+  0.4   // 道路密度
 ];
 
-// 悬崖/积水/断崖病理原型 (真正严重的病态：极陡峭绝壁上密集建城，或深水落水)
+// 2. 正常自然山野/森林原型 (无人造建筑的高山与谷地)
+const PROTO_NATURE = [
+  0.4,  // 中高海拔
+  0.35, // 正常山势高差
+  0.35, // 正常山坡 (~10°)
+  0.45, // 正常山脊
+  0.1,  // 局部小水体
+  0.1,
+  0.0, 0.0, 0.0, 0.0,
+  0.0, 0.0, 0.0
+];
+
+// 3. 正常开阔海洋/湖泊水体原型 (纯净水面，平坦无坡度，无建筑)
+const PROTO_WATER = [
+  0.0,  // 海平面/水面高度
+  0.02, // 几乎无高差
+  0.02, // 几乎零坡度
+  0.05,
+  1.0,  // 100% 水体覆盖
+  0.0,
+  0.0, 0.0, 0.0, 0.0,
+  0.0, 0.0, 0.0
+];
+
+// 4. 真正违和的病理原型 (核心矛盾：在极险陡壁悬崖上硬塞密集建筑，或深水落水建筑)
 const PROTO_PATHOLOGY = [
-  0.8, 1.0, 1.0, 1.0, 0.9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.9, 0.2, 0.05
-];
-
-// 自然荒野原型 (高山无人区或开阔海面，属于正常的自然环境，不是病态违和)
-const PROTO_WILD = [
-  0.5, 0.4, 0.5, 0.6, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+  0.8,  // 极端海拔
+  1.0,  // 断裂落差 (>100m)
+  1.0,  // 极陡悬崖 (>30°)
+  1.0,
+  0.6,  // 水陆交织泥泞
+  0.0,
+  0.0, 0.0, 0.0, 0.0,
+  0.9,  // 却硬塞了密集建筑！ (违和核心)
+  0.6,
+  0.3   // 悬崖/水中有道路
 ];
 
 function cosineSim(a, b) {
@@ -59,13 +96,14 @@ export function computeReflexHeatmap(world, stepMeters = 150) {
       const cz = y0 + j * stepMeters;
       const feat = extractTileFeature(world, cx, cz, stepMeters * 0.8);
 
-      const sH = cosineSim(feat.numericVector, PROTO_HEALTHY);
-      const sW = cosineSim(feat.numericVector, PROTO_WILD);
-      const sP = cosineSim(feat.numericVector, PROTO_PATHOLOGY);
+      const sTown = cosineSim(feat.numericVector, PROTO_TOWN);
+      const sNat = cosineSim(feat.numericVector, PROTO_NATURE);
+      const sWater = cosineSim(feat.numericVector, PROTO_WATER);
+      const sPath = cosineSim(feat.numericVector, PROTO_PATHOLOGY);
 
-      // 如果是无建筑的纯自然荒野/深海，属于健康的自然态
-      const naturalScore = Math.max(sH, sW * 0.85);
-      const score = naturalScore - sP; // [-1, +1]
+      // 正常的自然山野、正常纯净水体、健康的城镇，都是自洽的
+      const naturalScore = Math.max(sTown, sNat * 0.95, sWater * 0.95);
+      const score = naturalScore - sPath; // [-1, +1]
 
       const idx = j * cols + i;
       scores[idx] = score;
@@ -74,7 +112,7 @@ export function computeReflexHeatmap(world, stepMeters = 150) {
       if (score > maxScore) maxScore = score;
 
       if (score >= 0.1) healthyCount++;
-      else if (score >= -0.2) warningCount++;
+      else if (score >= -0.15) warningCount++;
       else dangerCount++;
 
       tiles.push({
