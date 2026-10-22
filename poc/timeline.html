@@ -1,0 +1,130 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>RFC-001 PoC — timeline playback</title>
+<style>html,body{margin:0;background:#0d1b24;color:#cfe;font:13px system-ui}#c{width:100vw;height:100vh;display:block}#hud{position:fixed;left:12px;top:10px;white-space:pre}#bar{position:fixed;left:12px;right:12px;bottom:14px}</style></head>
+<body><canvas id="c"></canvas><div id="hud">loading…</div><input id="bar" type="range" min="0" max="1000" value="0">
+<script type="module">
+import * as THREE from '../vendor/three.module.js';
+const q = new URLSearchParams(location.search);
+const cfg = { type: q.get('type') || 'river', seed: +(q.get('seed') || 20261019), size: 6000, res: +(q.get('res') || 512) };
+const DURATION = +(q.get('dur') || 12000);   // ms for a full playback
+const TERRAIN_SHARE = 0.6;                    // first 60%: terrain keyframes; rest: town replay
+const hud = document.getElementById('hud'); const bar = document.getElementById('bar');
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0d1b24);
+const camera = new THREE.PerspectiveCamera(45, 1, 5, 60000);
+scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x2a2a1e, 1.6));
+const sun = new THREE.DirectionalLight(0xffe3b8, 2.2); sun.position.set(2000, 3000, 1200); scene.add(sun);
+function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+
+const worker = new Worker('./worker.js', { type: 'module' });
+const tW = performance.now();
+const data = await new Promise((res) => { worker.onmessage = (e) => { if (e.data.type === 'done') res(e.data); else hud.textContent = `computing ${e.data.stage} ${(e.data.value * 100) | 0}%`; }; worker.postMessage(cfg); });
+const wall = performance.now() - tW;
+
+const { field, keys, grid } = data; const n = grid; const VS = 1.45;
+const cell = field.size / (n - 1);
+// ---- terrain mesh, created once, updated in place ----
+const pos = new Float32Array(n * n * 3), nor = new Float32Array(n * n * 3), col = new Float32Array(n * n * 3);
+for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const k = (y * n + x) * 3; pos[k] = field.x0 + x * cell; pos[k + 2] = field.y0 + y * cell; }
+const idx = new Uint32Array((n - 1) * (n - 1) * 6); let t = 0;
+for (let y = 0; y < n - 1; y++) for (let x = 0; x < n - 1; x++) { const a = y * n + x, b = a + 1, c = a + n, d = c + 1; idx.set([a, c, b, b, c, d], t); t += 6; }
+const geo = new THREE.BufferGeometry();
+const aPos = new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage);
+const aNor = new THREE.BufferAttribute(nor, 3).setUsage(THREE.DynamicDrawUsage);
+const aCol = new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage);
+geo.setAttribute('position', aPos); geo.setAttribute('normal', aNor); geo.setAttribute('color', aCol); geo.setIndex(new THREE.BufferAttribute(idx, 1));
+geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(field.x0 + field.size / 2, 0, field.y0 + field.size / 2), field.size);
+scene.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 })));
+const H = new Float32Array(n * n);
+function ramp(h, i, final, k) {
+  let r, g, b;
+  if (h <= 0) { r = 0.12; g = 0.28; b = 0.42; }
+  else if (final && data.water[i]) { r = 0.2; g = 0.42; b = 0.56; }
+  else if (final && data.river[i]) { r = 0.25; g = 0.5; b = 0.62; }
+  else { const u = h < 900 ? h / 900 : 1; if (u < 0.5) { r = 0.36 + 0.2 * u; g = 0.5 - 0.1 * u; b = 0.28; } else { r = 0.46 + 0.3 * (u - 0.5); g = 0.45 + 0.3 * (u - 0.5); b = 0.38 + 0.4 * (u - 0.5); } }
+  col[k] = r; col[k + 1] = g; col[k + 2] = b;
+}
+function setHeights(final) {
+  const inv2 = 1 / (2 * cell);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const i = y * n + x, k = i * 3, h = H[i];
+    pos[k + 1] = h * VS;
+    const hx = (H[y * n + Math.min(n - 1, x + 1)] - H[y * n + Math.max(0, x - 1)]) * inv2 * VS;
+    const hz = (H[Math.min(n - 1, y + 1) * n + x] - H[Math.max(0, y - 1) * n + x]) * inv2 * VS;
+    const l = 1 / Math.sqrt(hx * hx + 1 + hz * hz); nor[k] = -hx * l; nor[k + 1] = l; nor[k + 2] = -hz * l;
+    ramp(h, i, final, k);
+  }
+  aPos.needsUpdate = aNor.needsUpdate = aCol.needsUpdate = true;
+}
+// Epoch 0 "uplift reveal": scale the designed field from 0 (presentation only).
+function terrainAt(u) {
+  const KS = keys.length; const first = keys[0].height;
+  if (u < 0.15) { const s = u / 0.15, e = s * s * (3 - 2 * s); for (let i = 0; i < H.length; i++) H[i] = first[i] * 0.1 * e; return false; }
+  const x = (u - 0.15) / 0.85 * (KS - 1); const a = Math.min(KS - 2, Math.floor(x)); const m = x - a;
+  const A = keys[a].height, B = keys[a + 1].height;
+  for (let i = 0; i < H.length; i++) H[i] = (A[i] + (B[i] - A[i]) * m) * 0.1;
+  return a + 1 >= KS - 1 && m > 0.999;
+}
+// ---- buildings: one InstancedMesh, instances sorted by appearance, reveal = count ----
+const ev = data.replay.events, B = data.town.buildings;
+const bOrder = ev.filter((e) => e.kind === 'building' || e.kind === 'station');
+const box = new THREE.BoxGeometry(1, 1, 1); box.translate(0, 0.5, 0);
+const bMesh = new THREE.InstancedMesh(box, new THREE.MeshStandardMaterial({ color: 0xe8dcc8, roughness: 0.8 }), bOrder.length);
+const finalH = keys[keys.length - 1].height;
+const hAt = (x, z) => { const gx = Math.round((x - field.x0) / cell), gz = Math.round((z - field.y0) / cell); return finalH[Math.max(0, Math.min(n - 1, gz)) * n + Math.max(0, Math.min(n - 1, gx))] * 0.1 * VS; };
+const m4 = new THREE.Matrix4(), qt = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+const bT = new Float32Array(bOrder.length);
+bOrder.forEach((e, k) => { const b = B[e.ref]; qt.setFromAxisAngle(up, -b.angle); m4.compose(new THREE.Vector3(b.x, hAt(b.x, b.z), b.z), qt, new THREE.Vector3(b.w, b.h * 1.6, b.d)); bMesh.setMatrixAt(k, m4); bT[k] = e.t; });
+bMesh.count = 0; scene.add(bMesh);
+// ---- roads: one LineSegments buffer in replay order, reveal = drawRange ----
+const rOrder = ev.filter((e) => e.kind === 'arterial' || e.kind === 'street');
+const segs = []; const segT = [];
+for (const e of rOrder) { const p = data.town.roads[e.ref].pts; for (let i = 1; i < p.length; i++) { segs.push(p[i - 1][0], hAt(p[i - 1][0], p[i - 1][1]) + 3, p[i - 1][1], p[i][0], hAt(p[i][0], p[i][1]) + 3, p[i][1]); segT.push(e.t); } }
+const rGeo = new THREE.BufferGeometry(); rGeo.setAttribute('position', new THREE.Float32BufferAttribute(segs, 3));
+const roads = new THREE.LineSegments(rGeo, new THREE.LineBasicMaterial({ color: 0xf6f1e4 })); rGeo.setDrawRange(0, 0); scene.add(roads);
+const upper = (arr, v) => { let lo = 0, hi = arr.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid] <= v) lo = mid + 1; else hi = mid; } return lo; };
+// ---- camera ----
+const c = data.town.center || { x: field.x0 + field.size / 2, z: field.y0 + field.size / 2 };
+function setCamera(u) {
+  const far = { d: field.size * 1.05, h: field.size * 0.7 }, near = { d: field.size * 0.35, h: field.size * 0.25 };
+  const s = Math.max(0, Math.min(1, (u - 0.55) / 0.3)), e = s * s * (3 - 2 * s);
+  const tx = field.x0 + field.size / 2 + (c.x - field.x0 - field.size / 2) * e, tz = field.y0 + field.size / 2 + (c.z - field.y0 - field.size / 2) * e;
+  const d = far.d + (near.d - far.d) * e, h = far.h + (near.h - far.h) * e;
+  camera.position.set(tx + d * 0.6, h, tz + d * 0.8); camera.lookAt(tx, 0, tz);
+}
+// ---- one function renders any time u in 0..1 (so scrubbing == playback) ----
+let lastTerrainKey = -1;
+function show(u) {
+  const t0 = performance.now();
+  const tu = Math.min(1, u / TERRAIN_SHARE);
+  const key = Math.round(tu * 4000);
+  if (key !== lastTerrainKey) { const final = terrainAt(tu); setHeights(final || tu >= 1); lastTerrainKey = key; }
+  const town = Math.max(0, (u - TERRAIN_SHARE) / (1 - TERRAIN_SHARE));
+  bMesh.count = u <= TERRAIN_SHARE ? 0 : upper(bT, town); bMesh.instanceMatrix.needsUpdate = false;
+  rGeo.setDrawRange(0, (u <= TERRAIN_SHARE ? 0 : upper(segT, town)) * 2);
+  setCamera(u);
+  const t1 = performance.now();
+  renderer.render(scene, camera);
+  return { update: t1 - t0, total: performance.now() - t0 };
+}
+// ---- metrics ----
+const stats = { cfg, workerCompute: data.compute, workerWall: wall, frames: data.frames, keyframes: keys.length, keyMB: data.bytes / 1048576, buildings: bOrder.length, roads: rOrder.length, events: ev.length, play: [], raf: [] };
+window.__poc = { stats, show, done: false };
+let start = null, lastRaf = null, playing = true;
+bar.oninput = () => { playing = false; show(bar.value / 1000); };
+function loop(now) {
+  if (lastRaf != null) stats.raf.push(now - lastRaf); lastRaf = now;
+  if (playing) {
+    if (start == null) start = now;
+    const u = Math.min(1, (now - start) / DURATION);
+    const r = show(u); stats.play.push(r); bar.value = String(Math.round(u * 1000));
+    hud.textContent = `RFC-001 PoC · ${cfg.type} ${cfg.seed} @${n}\nworker compute ${data.compute.toFixed(0)} ms · ${keys.length} keyframes (${stats.keyMB.toFixed(1)} MB)\nt=${(u * 100).toFixed(0)}% · update ${r.update.toFixed(1)} ms · buildings ${bMesh.count}/${bOrder.length}`;
+    if (u >= 1) { playing = false; window.__poc.done = true; }
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

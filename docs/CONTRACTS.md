@@ -182,6 +182,60 @@ generateWorld({ type, seed, size, res, erosion }) -> {
   - `{ type: 'done', result }`
   - `{ type: 'error', message, stack }`
 
+## 演化管线（计划，RFC-001 / ADR-001 ~ ADR-003）
+
+> 状态：提议。T09a 实现前由集成者冻结。取代上节“Worker 管线”中 `generateWorld` 的签名（只追加字段，不删除）。
+
+```js
+// src/pipeline.js
+export function* createWorldEvolution(config, opts = {}) -> Iterator<Frame>
+export function generateWorld(config) -> {
+  field, hydro, town, ecology, droplets, timings,   // ecology 为新增字段
+}
+
+config = {
+  type, seed, size, res,
+  erosion = true,
+  townMode = 'classic',   // 'classic' | 'evolve'（T28 之前只接受 'classic'）
+  events = [],            // T22 之前必须为空
+}
+opts = { dropletBatch = 1024 }
+
+Frame = {
+  stage,      // 'design' | 'erosion' | 'thermal' | 'smooth' | 'outlet' | 'hydrology'
+              // | 'ecology-natural' | 'town' | 'ecology' | 'done'
+  progress,   // 0..1，单调不减
+  step, steps,
+  droplets,
+  height,     // Float32Array 活引用，仅在下一次 next() 前有效
+  grid,       // height 的网格边长
+  hydro, ecologyNatural, town, ecology,   // 出现后只读
+}
+```
+
+不变式：
+
+- `generateWorld(config)` 与把 `createWorldEvolution(config)` 迭代到底的结果相同。
+- `townMode: 'classic'` 且 `events` 为空时，终态与金标快照（`test/golden.json`，T16）逐位一致。
+- 任意 `dropletBatch` 终态相同。
+- 纯函数式：不访问 DOM、canvas、window。
+
+Worker 消息追加（原有 `progress/done/error` 保留）：
+
+- `{ type: 'keyframe', stage, t, grid, height }`，`height` 为 Int16Array（0.1 m 量化，transfer）。
+- `{ type: 'events', events }`，城镇回放/演化事件。
+
+城镇回放（T19，`src/town-replay.js`）：
+
+```js
+buildTownReplay(town) -> {
+  duration,   // 归一化 0..1
+  events: [{ t, kind, ref }],  // kind: center|arterial|rail|station|street|parcel|building；ref 为 town 内数组下标
+}
+```
+
+- 每条道路/地块/建筑恰好一个事件；`t` 单调不减；只读 `town`。
+
 ## 变更流程
 
 1. 在任务卡/ADR 中写明字段、语义、影响任务。
