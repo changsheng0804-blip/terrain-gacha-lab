@@ -1,5 +1,6 @@
-import { clamp } from './rng.js?v=19';
+import { clamp, rngFor, smoothstep } from './rng.js?v=19';
 import { ZONE, ZONE_COLORS } from './town.js?v=23';
+import { buildEcology, BIOME } from './ecology.js?v=1';
 
 function mix(a, b, t) {
   return [
@@ -193,8 +194,12 @@ function drawRiverPaths(ctx, paths, maxAcc, project, scale, maxWidth = 46) {
   ctx.restore();
 }
 
-export function renderTerrain(canvas, field, hydro, town, view = 'color', showTown = true) {
+export function renderTerrain(canvas, field, hydro, town, view = 'color', showTown = true, ecology = null) {
   const { n, height, cell, size } = field;
+  // Only the color and town views consume ecology fields; other views keep
+  // the old (cheaper) path even when a 7-arg call passes nothing.
+  const needsEcology = view === 'color' || view === 'town';
+  const eco = needsEcology ? (ecology || buildEcology(field, hydro, town)) : null;
   const outN = n * 2;
   const viewBounds = view === 'town' && town
     ? computeTownView(field, town)
@@ -258,6 +263,14 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
       } else if (view === 'town') {
         rgb = sea ? [14, 32, 46] : mix([28, 32, 38], heightColor(h), 0.18);
         shadeFactor = 0.85;
+        if (!sea && eco) {
+          // Low-intensity forest tint only; tree canopies are skipped in the
+          // town view so roads, parcels and rails stay readable.
+          const forestV = sampleGrid(eco.forest, n, gx, gy);
+          if (forestV > 0.15) {
+            rgb = mix(rgb, [44, 78, 52], Math.min(0.34, 0.3 * forestV));
+          }
+        }
       } else {
         rgb = heightColor(h);
 
@@ -268,15 +281,36 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
           rgb = mix([64, 140, 176], [6, 20, 46], Math.max(depth, floorDepth * 0.7));
           if (dLand <= 4) rgb = mix(rgb, [96, 156, 172], 0.30);
           shadeFactor = 1;
-        } else {
-          const beachLimit = 0.8 + 2.0
-            * (0.5 + 0.5 * Math.sin(gx * 0.02 + gy * 0.035))
-            * (0.6 + 0.4 * Math.sin(gx * 0.011 - gy * 0.017));
+        } else if (eco) {
+          const b = sampleBiome(eco.biome, n, gx, gy);
+          const moist = sampleGrid(eco.moisture, n, gx, gy);
+          const forestV = sampleGrid(eco.forest, n, gx, gy);
+          const rockV = sampleGrid(eco.rock, n, gx, gy);
+          const snowV = sampleGrid(eco.snow, n, gx, gy);
+          const beachV = sampleGrid(eco.beach, n, gx, gy);
 
-          if (h < beachLimit && dSea <= 10) {
-            rgb = mix([212, 200, 158], [188, 178, 138], clamp(h / beachLimit, 0, 1));
-          } else if (h < 3.2) {
-            rgb = mix([92, 142, 82], [58, 108, 64], clamp(h / 3.2, 0, 1));
+          // Grass base modulated by elevation and moisture, so flats never
+          // read as one flat swatch.
+          rgb = mix([118, 150, 84], [140, 152, 94], clamp((h - 4) / 700, 0, 1));
+          rgb = mix(rgb, [176, 162, 100], (1 - moist) * 0.38);
+
+          if (b === BIOME.FOREST) {
+            rgb = mix(rgb, [44, 82, 52], 0.42 + 0.38 * forestV);
+          }
+          if (b === BIOME.WETLAND) {
+            rgb = mix(rgb, [66, 104, 80], 0.8);
+          }
+
+          // Rock and snow use the continuous ecology fields, giving soft
+          // transitions instead of hard biome edges.
+          if (rockV > 0.16) {
+            rgb = mix(rgb, [140, 134, 122], smoothstep(0.16, 0.62, rockV));
+          }
+          if (snowV > 0.1) {
+            rgb = mix(rgb, [233, 239, 245], smoothstep(0.1, 0.55, snowV));
+          }
+          if (beachV > 0.02) {
+            rgb = mix(rgb, [214, 200, 152], Math.min(1, beachV) * 0.94);
           }
 
           const nx = -dhx;
@@ -285,11 +319,6 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
           const inv = 1 / Math.hypot(nx, ny, nz);
           shadeFactor = clamp((nx * light[0] + ny * light[1] + nz * light[2]) * inv, 0.48, 1.32);
           shadeFactor *= 1 + 0.06 * clamp(h / 1200, 0, 1);
-
-          if (h > 8 && h < 420 && angle > 5) {
-            const forest = clamp((angle - 5) / 18, 0, 0.35);
-            rgb = mix(rgb, [38, 82, 52], forest);
-          }
 
           if (dSea <= 4) rgb = mix(rgb, [96, 156, 172], 0.28);
         }
@@ -316,6 +345,15 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
   }
 
   ctx.putImageData(image, 0, 0);
+
+  let treeClusters = 0;
+  if (view === 'color' && eco) {
+    // Canopies sit on top of the base image but underneath rivers and the
+    // town overlay, so roads/buildings always win.
+    const clusters = buildTreeClusters(field, eco, town);
+    treeClusters = clusters.length;
+    drawTreeClusters(ctx, field, clusters, outN, viewBounds);
+  }
 
   let riverPaths = 0;
   let riverSample = null;
@@ -357,7 +395,118 @@ export function renderTerrain(canvas, field, hydro, town, view = 'color', showTo
     townBuildings: town ? town.buildings.length : 0,
     townRoads: town ? town.roads.length : 0,
     viewBounds,
+    treeClusters,
+    ecoStats: eco ? eco.stats : null,
   };
+}
+
+function sampleBiome(biome, n, gx, gy) {
+  const x = clamp(Math.round(gx), 0, n - 1);
+  const y = clamp(Math.round(gy), 0, n - 1);
+  return biome[y * n + x];
+}
+
+const TREE_CLUSTER_MAX = 5200;
+
+/**
+ * Deterministic canopy clusters for the color view.
+ *
+ * Candidates are every FOREST cell outside effective town zones (CORE/RES/
+ * PADDY/IND/HAMLET). A partial Fisher-Yates driven by
+ * rngFor(field.seed, 'trees2d:' + terrain.id) picks up to TREE_CLUSTER_MAX
+ * clusters, so the same seed always yields the same forest.
+ */
+function buildTreeClusters(field, eco, town, maxClusters = TREE_CLUSTER_MAX) {
+  const { n } = field;
+  const { biome } = eco;
+  const zones = town && town.zones && town.zones.length === n * n ? town.zones : null;
+  const rng = rngFor(field.seed ?? 0, 'trees2d:' + (field.terrain?.id ?? 'unknown'));
+
+  const candidates = [];
+  for (let i = 0; i < n * n; i++) {
+    if (biome[i] !== BIOME.FOREST) continue;
+    if (zones && zones[i] !== ZONE.NONE && zones[i] !== ZONE.WATER) continue;
+    candidates.push(i);
+  }
+  if (candidates.length === 0) return [];
+
+  const take = Math.min(candidates.length, maxClusters);
+  for (let k = 0; k < take; k++) {
+    const j = k + Math.floor(rng() * (candidates.length - k));
+    const tmp = candidates[k];
+    candidates[k] = candidates[j];
+    candidates[j] = tmp;
+  }
+
+  const clusters = new Array(take);
+  for (let k = 0; k < take; k++) {
+    const i = candidates[k];
+    const gx = (i % n) + 0.5;
+    const gy = ((i / n) | 0) + 0.5;
+
+    // Three canopy tiers plus a small jitter, expressed in grid cells.
+    const tier = rng();
+    let base = tier < 0.34 ? 1.15 : tier < 0.76 ? 1.6 : 2.2;
+    base *= 0.85 + 0.3 * rng();
+
+    const satellites = [];
+    for (const spec of [0.52 + 0.16 * rng(), 0.3 + 0.14 * rng()]) {
+      const ang = rng() * Math.PI * 2;
+      satellites.push({
+        dx: Math.cos(ang) * base * 0.55,
+        dy: Math.sin(ang) * base * 0.55,
+        r: base * spec,
+      });
+    }
+
+    clusters[k] = { gx, gy, base, satellites };
+  }
+  return clusters;
+}
+
+/**
+ * Draw canopy clusters as three merged fills (deep base + two lighter
+ * satellite passes). Merging the arcs into one path per layer keeps the
+ * ~5k-cluster case fast.
+ */
+function drawTreeClusters(ctx, field, clusters, outN, viewBounds) {
+  if (clusters.length === 0) return;
+
+  const scale = outN / viewBounds.size; // px per metre
+  const pxPerCell = field.cell * scale;
+  const project = (gx, gy) => [
+    (field.x0 + gx * field.cell - viewBounds.x0) * scale,
+    (field.y0 + gy * field.cell - viewBounds.y0) * scale,
+  ];
+
+  ctx.save();
+
+  ctx.beginPath();
+  for (const c of clusters) {
+    const [px, py] = project(c.gx, c.gy);
+    const r = Math.max(0.6, c.base * pxPerCell);
+    ctx.moveTo(px + r, py);
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+  }
+  ctx.fillStyle = 'rgba(24, 55, 35, 0.95)';
+  ctx.fill();
+
+  const drawSatellites = (sel, color) => {
+    ctx.beginPath();
+    for (const c of clusters) {
+      const s = c.satellites[sel];
+      const [px, py] = project(c.gx + s.dx, c.gy + s.dy);
+      const r = Math.max(0.45, s.r * pxPerCell);
+      ctx.moveTo(px + r, py);
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = color;
+    ctx.fill();
+  };
+  drawSatellites(0, 'rgba(46, 92, 55, 0.92)');
+  drawSatellites(1, 'rgba(78, 130, 72, 0.85)');
+
+  ctx.restore();
 }
 
 function computeTownView(field, town) {

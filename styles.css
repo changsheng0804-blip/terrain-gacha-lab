@@ -170,6 +170,18 @@ button.icon {
 .legend i.rail { width: 14px; height: 2px; border-radius: 0; background: #d6cfb8; }
 .legend i.parcel { background: transparent; border: 1px solid rgba(235, 240, 230, 0.45); }
 
+.legend.eco {
+  margin-top: 5px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.legend.eco i.eco-forest { background: #2e5c37; border-radius: 50%; }
+.legend.eco i.eco-grass { background: #7f9658; }
+.legend.eco i.eco-rock { background: #8c867a; }
+.legend.eco i.eco-snow { background: #e9eff5; }
+.legend.eco i.eco-wetland { background: #426850; }
+.legend.eco i.eco-beach { background: #d6c898; }
+
 .hint { margin: 9px 0 0; color: var(--muted); font-size: 11.5px; }
 
 .stats { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; font-size: 12px; }
