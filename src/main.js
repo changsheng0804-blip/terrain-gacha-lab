@@ -186,6 +186,7 @@ async function generate() {
     // Compute Reflex Heatmap for Cognitive X-Ray View
     try {
       field.__reflexHeatmap = computeReflexHeatmap({ field, hydro, town, ecology: null }, 160);
+      updateAnomalyUI();
     } catch (e) {
       console.warn('Reflex heatmap computation skipped:', e);
       field.__reflexHeatmap = null;
@@ -425,8 +426,12 @@ document.querySelectorAll('#views button').forEach((button) => {
     }
 
     const reflexLegend = $('reflexLegend');
+    const reflexNavWrap = $('reflexNavWrap');
     if (reflexLegend) {
       reflexLegend.hidden = (state.view !== 'reflex');
+    }
+    if (reflexNavWrap) {
+      reflexNavWrap.hidden = (state.view !== 'reflex');
     }
 
     const info = renderTerrain(canvas, field, hydro, town, state.view, state.showTown);
@@ -508,6 +513,77 @@ if (timelineSlider) {
     stopTimeline();
     applyTimeline(Number(timelineSlider.value) / 1000);
   });
+}
+
+let currentAnomalyIndex = -1;
+
+function updateAnomalyUI() {
+  const countEl = $('anomalyCount');
+  const cardEl = $('anomalyCard');
+  if (!field || !field.__reflexHeatmap || !field.__reflexHeatmap.anomalies.length) {
+    if (countEl) countEl.textContent = '0';
+    if (cardEl) {
+      cardEl.textContent = '未发现明显违和切片 (全域自洽)';
+      cardEl.classList.remove('danger');
+    }
+    currentAnomalyIndex = -1;
+    return;
+  }
+
+  const anomalies = field.__reflexHeatmap.anomalies;
+  if (countEl) countEl.textContent = String(anomalies.length);
+  if (currentAnomalyIndex < 0 || currentAnomalyIndex >= anomalies.length) {
+    currentAnomalyIndex = 0;
+  }
+  showAnomalyCard(anomalies[currentAnomalyIndex]);
+}
+
+function showAnomalyCard(anomaly) {
+  const cardEl = $('anomalyCard');
+  if (!cardEl || !anomaly) return;
+
+  const isDanger = anomaly.score < -0.15;
+  cardEl.classList.toggle('danger', isDanger);
+  const tag = isDanger ? '🔴 病态违和' : '🟡 边缘疑难';
+
+  cardEl.innerHTML = `
+    <b>#${currentAnomalyIndex + 1} ${tag}</b> (评分: ${anomaly.score.toFixed(2)})<br>
+    坐标: (${Math.round(anomaly.cx)}, ${Math.round(anomaly.cz)}) · 分区: ${anomaly.feat.dominantZone}<br>
+    坡度: 平均 ${anomaly.feat.slopeMean.toFixed(1)}° (最大 ${anomaly.feat.slopeMax.toFixed(1)}°)<br>
+    建筑: ${anomaly.feat.buildingCount} 栋 · 道路密度: ${anomaly.feat.roadDensityKm2.toFixed(1)} km/km²
+  `;
+}
+
+function focusCurrentAnomaly() {
+  if (!field || !field.__reflexHeatmap) return;
+  const anomalies = field.__reflexHeatmap.anomalies;
+  if (!anomalies || !anomalies.length) return;
+
+  currentAnomalyIndex = (currentAnomalyIndex + 1) % anomalies.length;
+  const a = anomalies[currentAnomalyIndex];
+  showAnomalyCard(a);
+
+  // 1. 若处于 3D 模式，平滑飞行镜头到目标点
+  if (state.view === '3d' && view3d && view3dReady) {
+    view3d.focusPoint(a.cx, a.cz, 500);
+    setStatus(`聚焦违和切片 #${currentAnomalyIndex + 1} · (${Math.round(a.cx)}, ${Math.round(a.cz)})`);
+    return;
+  }
+
+  // 2. 若处于 2D 模式，居中裁剪显示该切片特写 (300m 半径)
+  const customBounds = {
+    x0: a.cx - 300,
+    y0: a.cz - 300,
+    size: 600,
+  };
+  const info = renderTerrain(canvas, field, hydro, town, state.view, state.showTown, null, customBounds);
+  viewBounds = info.viewBounds;
+  setStatus(`聚焦违和切片 #${currentAnomalyIndex + 1} · (${Math.round(a.cx)}, ${Math.round(a.cz)})`);
+}
+
+const btnNextAnomaly = $('btnNextAnomaly');
+if (btnNextAnomaly) {
+  btnNextAnomaly.addEventListener('click', focusCurrentAnomaly);
 }
 
 // Initial render.

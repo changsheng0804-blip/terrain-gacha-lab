@@ -1253,12 +1253,22 @@ export function create3DView(canvas) {
     }).observe(canvas.parentElement);
   }
 
+  function focusPoint(targetX, targetZ, distMeters = 600) {
+    if (!field) return;
+    target.set(targetX, heightAt(targetX, targetZ) * VERTICAL_SCALE, targetZ);
+    radius = clamp(distMeters, field.size * 0.05, field.size * 2);
+    pitch = 0.58;
+    yaw = 0.8;
+    needsRender = true;
+  }
+
   return {
     update,
     setActive,
     setShowTown,
     initTimeline,
     setTimeline,
+    focusPoint,
     capture,
     resetCamera,
     resize,

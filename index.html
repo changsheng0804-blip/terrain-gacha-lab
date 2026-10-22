@@ -110,6 +110,13 @@
           <span><i style="background:#e4b230"></i>边缘疑难 (-0.15~0.2)</span>
           <span><i style="background:#d63030"></i>病理违和 (&lt;-0.15)</span>
         </div>
+        <div id="reflexNavWrap" class="reflex-nav-wrap" hidden>
+          <div class="reflex-nav-header">
+            <span>违和切片巡检 (<b id="anomalyCount">0</b>)</span>
+            <button id="btnNextAnomaly" class="btn-micro" type="button">聚焦下一个 ⇥</button>
+          </div>
+          <div id="anomalyCard" class="anomaly-card">无异常切片</div>
+        </div>
         <p class="hint" id="hint">鼠标移到画布上查看高度、坡度、汇流量与分区。</p>
       </section>
 
@@ -139,6 +146,6 @@
     </section>
   </main>
 
-  <script type="module" src="src/main.js?v=49"></script>
+  <script type="module" src="src/main.js?v=50"></script>
 </body>
 </html>

@@ -285,6 +285,44 @@ canvas {
   text-align: right;
 }
 
+.reflex-nav-wrap {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: #16222f;
+  border: 1px solid #28394a;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.reflex-nav-wrap[hidden] { display: none; }
+.reflex-nav-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  color: #a0bad2;
+}
+.btn-micro {
+  background: #273b4e;
+  border: 1px solid #415970;
+  color: #dbe8f5;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.btn-micro:hover { background: #375069; }
+.anomaly-card {
+  padding: 6px 8px;
+  background: #0f1822;
+  border-left: 3px solid #e4b230;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #c7d8e8;
+  word-break: break-word;
+}
+.anomaly-card.danger { border-left-color: #e63946; }
+
 @media (max-width: 860px) {
   main { display: flex; flex-direction: column; }
   .stage { order: -1; padding: 12px; }

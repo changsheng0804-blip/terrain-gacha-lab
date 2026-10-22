@@ -123,12 +123,19 @@ export function computeReflexHeatmap(world, stepMeters = 150) {
     }
   }
 
+  // 提取最值得关注的违和/疑难切片（按违和度从高到低排序，排除纯粹无建筑的空旷自然地块）
+  const anomalies = tiles
+    .filter((t) => t.score < 0.1 && (t.feat.buildingCount > 0 || t.feat.roadDensityKm2 > 0 || t.feat.dominantZone !== 'NONE'))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 12); // 取前 12 个重点疑难点
+
   return {
     cols,
     rows,
     stepMeters,
     scores,
     tiles,
+    anomalies,
     minScore,
     maxScore,
     stats: {

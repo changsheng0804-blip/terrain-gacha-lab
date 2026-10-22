@@ -212,16 +212,18 @@ function drawRiverPaths(ctx, paths, maxAcc, project, scale, maxWidth = 46) {
   ctx.restore();
 }
 
-export function renderTerrain(canvas, field, hydro, town, view = 'color', showTown = true, ecology = null) {
+export function renderTerrain(canvas, field, hydro, town, view = 'color', showTown = true, ecology = null, customBounds = null) {
   const { n, height, cell, size } = field;
   // Only the color and town views consume ecology fields; other views keep
   // the old (cheaper) path even when a 7-arg call passes nothing.
   const needsEcology = view === 'color' || view === 'town';
   const eco = needsEcology ? (ecology || buildEcology(field, hydro, town)) : null;
   const outN = n * 2;
-  const viewBounds = view === 'town' && town
-    ? computeTownView(field, town)
-    : { x0: field.x0, y0: field.y0, size: field.size };
+  const viewBounds = customBounds
+    ? customBounds
+    : (view === 'town' && town
+      ? computeTownView(field, town)
+      : { x0: field.x0, y0: field.y0, size: field.size });
 
   canvas.width = outN;
   canvas.height = outN;
