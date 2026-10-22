@@ -1,5 +1,7 @@
 import * as THREE from '../vendor/three.module.js';
 import { ZONE_COLORS } from './town.js?v=23';
+import { buildEcology } from './ecology.js?v=1';
+import { rngFor } from './rng.js?v=19';
 
 // A modest vertical exaggeration makes 6 km-wide terrain read better from the
 // default camera distance without changing the underlying generator.
@@ -14,6 +16,33 @@ const TYPE_COLORS = {
   barn: [166, 104, 74],
   station: [242, 246, 250],
 };
+
+// --- 3D vegetation (T03) ----------------------------------------------------
+
+// Per-canopy palettes: 2-3 dark/grey greens per species. Instance colours are
+// the palette entry multiplied by a deterministic per-tree tint.
+const CONIFER_COLORS = [
+  [34, 78, 46],
+  [46, 92, 54],
+  [38, 84, 62],
+];
+const BROADLEAF_COLORS = [
+  [56, 104, 50],
+  [84, 118, 58],
+  [46, 88, 46],
+];
+const SHRUB_COLORS = [
+  [92, 108, 62],
+  [76, 96, 56],
+];
+
+// Total tree instance budget by grid size (field.n). 512 stays inside the
+// 1500-3000 band from the task card; 1024 is capped at 5000.
+function treeBudgetFor(n) {
+  if (n <= 256) return 1200;
+  if (n <= 512) return 3000;
+  return 5000;
+}
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
@@ -79,6 +108,8 @@ export function create3DView(canvas) {
 
   let world = null;
   let townGroup = null;
+  let treeGroup = null;
+  let treeStats = { count: 0, meshes: 0 };
   let field = null;
   let hydro = null;
   let town = null;
@@ -731,6 +762,270 @@ export function create3DView(canvas) {
     world.add(townGroup);
   }
 
+  // --- 3D vegetation (T03) --------------------------------------------------
+
+  function disposeTreeGroup() {
+    if (!treeGroup) return;
+    if (treeGroup.parent) treeGroup.parent.remove(treeGroup);
+    const geometries = new Set();
+    const materials = new Set();
+    treeGroup.traverse((obj) => {
+      if (obj.geometry) geometries.add(obj.geometry);
+      if (obj.material) {
+        const list = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of list) materials.add(mat);
+      }
+    });
+    for (const geo of geometries) geo.dispose();
+    for (const mat of materials) mat.dispose();
+    treeGroup = null;
+    treeStats = { count: 0, meshes: 0 };
+  }
+
+  /**
+   * Build the instanced tree layer. One InstancedMesh per species part; every
+   * part geometry is pre-translated so one instance matrix drives the whole
+   * tree. Placement follows the ecology forest density and avoids water,
+   * steep slopes, snow, town zones, building footprints and road/rail
+   * corridors. All randomness comes from rngFor(seed, 'trees3d:...').
+   */
+  function buildTrees(ecologyParam) {
+    disposeTreeGroup();
+    if (!world || !field || !hydro) return;
+
+    const { n, cell, x0, y0, height } = field;
+    const count = n * n;
+
+    let eco = ecologyParam;
+    if (!eco || !eco.forest || eco.forest.length !== count || !eco.snow) {
+      eco = buildEcology(field, hydro, town);
+    }
+
+    // Cells blocked by town infrastructure: building footprints plus a
+    // margin, and corridors along road / railway centrelines.
+    const blocked = new Uint8Array(count);
+    const markDisc = (wx, wz, radiusM) => {
+      const cx = (wx - x0) / cell;
+      const cy = (wz - y0) / cell;
+      const r = radiusM / cell;
+      const gx0 = Math.max(0, Math.floor(cx - r));
+      const gx1 = Math.min(n - 1, Math.ceil(cx + r));
+      const gy0 = Math.max(0, Math.floor(cy - r));
+      const gy1 = Math.min(n - 1, Math.ceil(cy + r));
+      const r2 = r * r;
+      for (let gy = gy0; gy <= gy1; gy++) {
+        for (let gx = gx0; gx <= gx1; gx++) {
+          const dx = gx - cx;
+          const dy = gy - cy;
+          if (dx * dx + dy * dy <= r2) blocked[gy * n + gx] = 1;
+        }
+      }
+    };
+    const markPolyline = (pts, radiusM) => {
+      for (let s = 0; s < pts.length - 1; s++) {
+        const [ax, az] = pts[s];
+        const [bx, bz] = pts[s + 1];
+        const len = Math.hypot(bx - ax, bz - az);
+        const steps = Math.max(1, Math.ceil(len / (cell * 0.5)));
+        for (let k = 0; k <= steps; k++) {
+          const t = k / steps;
+          markDisc(ax + (bx - ax) * t, az + (bz - az) * t, radiusM);
+        }
+      }
+    };
+
+    if (town) {
+      for (const b of town.buildings || []) {
+        markDisc(b.x, b.z, Math.hypot(b.w, b.d) / 2 + 6);
+      }
+      for (const road of town.roads || []) {
+        markPolyline(road.pts || [], (road.width || 14) / 2 + 7);
+      }
+      if (town.railway && town.railway.pts) {
+        markPolyline(town.railway.pts, 14);
+      }
+    }
+
+    const zones = town && town.zones && town.zones.length === count
+      ? town.zones : null;
+    const slopeLimit2 = Math.tan((25 * Math.PI) / 180) ** 2;
+
+    const candidates = [];
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const i = y * n + x;
+        if (blocked[i]) continue;
+        if (zones && zones[i] !== 0) continue;
+        if (height[i] <= 1.5) continue;
+        if (hydro.seaMask && hydro.seaMask[i]) continue;
+        if (hydro.riverMask && hydro.riverMask[i]) continue;
+        if (eco.forest[i] <= 0.45) continue;
+        if (eco.snow[i] > 0.3) continue;
+
+        // Slope from central differences, compared as a squared gradient so
+        // the hot loop avoids atan per cell.
+        const xm = x > 0 ? i - 1 : i;
+        const xp = x < n - 1 ? i + 1 : i;
+        const ym = y > 0 ? i - n : i;
+        const yp = y < n - 1 ? i + n : i;
+        const gx = (height[xp] - height[xm]) / ((xp - xm) * cell);
+        const gy = (height[yp] - height[ym]) / ((yp - ym) * cell);
+        if (gx * gx + gy * gy > slopeLimit2) continue;
+
+        candidates.push(i);
+      }
+    }
+
+    const budget = treeBudgetFor(n);
+    const target = Math.min(budget, candidates.length);
+    if (target === 0) return;
+
+    const rng = rngFor(
+      field.seed ?? 0,
+      'trees3d:' + (field.terrain?.id ?? 'unknown'),
+    );
+    const keep = candidates.length > target ? target / candidates.length : 1;
+
+    const conifers = [];
+    const broadleaves = [];
+    const shrubs = [];
+
+    for (const i of candidates) {
+      if (keep < 1 && rng() > keep) continue;
+
+      const cx = i % n;
+      const cy = (i / n) | 0;
+      // Jitter inside the validated cell so trees do not sit on a rigid
+      // lattice; the offset is well under half a cell.
+      const wx = x0 + cx * cell + (rng() * 2 - 1) * cell * 0.32;
+      const wz = y0 + cy * cell + (rng() * 2 - 1) * cell * 0.32;
+      const wy = heightAt(wx, wz);
+      if (wy == null) continue;
+
+      const tree = {
+        x: wx,
+        y: wy - 0.25,
+        z: wz,
+        rot: rng() * Math.PI * 2,
+        tint: 0.9 + 0.2 * rng(),
+      };
+
+      // Damp ground favours broadleaf, drier ground favours conifers.
+      const moisture = eco.moisture ? eco.moisture[i] : 0.5;
+      const pConifer = clamp(0.78 - 0.5 * moisture, 0.25, 0.85);
+      const pBroadleaf = pConifer + (1 - pConifer) * 0.88;
+      const r = rng();
+
+      if (r < pConifer) {
+        tree.s = (5.5 + 4.5 * rng()) / 7.0;
+        tree.sh = tree.s * (0.82 + 0.36 * rng());
+        tree.color = CONIFER_COLORS[(rng() * CONIFER_COLORS.length) | 0];
+        conifers.push(tree);
+      } else if (r < pBroadleaf) {
+        tree.s = (4.5 + 4.0 * rng()) / 7.0;
+        tree.sh = tree.s * (0.9 + 0.5 * rng());
+        tree.color = BROADLEAF_COLORS[(rng() * BROADLEAF_COLORS.length) | 0];
+        broadleaves.push(tree);
+      } else {
+        tree.s = (1.0 + 1.1 * rng()) / 1.5;
+        tree.sh = tree.s * (0.8 + 0.6 * rng());
+        tree.color = SHRUB_COLORS[(rng() * SHRUB_COLORS.length) | 0];
+        shrubs.push(tree);
+      }
+    }
+
+    // Low-poly parts, pre-translated so all parts of a species share one
+    // instance matrix. Roots sit at local y = 0.
+    const coniferTrunkGeo = new THREE.CylinderGeometry(0.16, 0.26, 2.4, 6, 1, true);
+    coniferTrunkGeo.translate(0, 1.2, 0);
+    const coneLowerGeo = new THREE.ConeGeometry(1.9, 3.4, 7);
+    coneLowerGeo.translate(0, 3.5, 0);
+    const coneUpperGeo = new THREE.ConeGeometry(1.25, 2.6, 7);
+    coneUpperGeo.translate(0, 5.7, 0);
+
+    const leafTrunkGeo = new THREE.CylinderGeometry(0.18, 0.3, 3.2, 6, 1, true);
+    leafTrunkGeo.translate(0, 1.6, 0);
+    const leafCanopyGeo = new THREE.IcosahedronGeometry(2.2, 0);
+    leafCanopyGeo.scale(1, 1.15, 1);
+    leafCanopyGeo.translate(0, 4.3, 0);
+
+    const bushGeo = new THREE.IcosahedronGeometry(0.9, 0);
+    bushGeo.scale(1, 0.85, 1);
+    bushGeo.translate(0, 0.72, 0);
+
+    // Trunks keep a single material colour (no instance colours); canopies
+    // take a per-instance palette colour with the per-tree tint applied.
+    const trunkMat = new THREE.MeshStandardMaterial({
+      color: 0x5c422e,
+      roughness: 0.95,
+      metalness: 0,
+    });
+    const canopyMat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0 });
+
+    const matrix = new THREE.Matrix4();
+    const quat = new THREE.Quaternion();
+    const axisY = new THREE.Vector3(0, 1, 0);
+    const pos = new THREE.Vector3();
+    const scl = new THREE.Vector3();
+    const color = new THREE.Color();
+
+    const meshes = [];
+    const addSpecies = (items, parts) => {
+      if (items.length === 0) return;
+      for (const part of parts) {
+        const mesh = new THREE.InstancedMesh(part.geo, part.mat, items.length);
+        for (let k = 0; k < items.length; k++) {
+          const t = items[k];
+          quat.setFromAxisAngle(axisY, t.rot);
+          pos.set(t.x, t.y, t.z);
+          scl.set(t.sh, t.s, t.sh);
+          matrix.compose(pos, quat, scl);
+          mesh.setMatrixAt(k, matrix);
+
+          if (!part.trunk) {
+            const c = t.color;
+            color.setRGB(
+              (c[0] / 255) * t.tint,
+              (c[1] / 255) * t.tint,
+              (c[2] / 255) * t.tint,
+              THREE.SRGBColorSpace,
+            );
+            mesh.setColorAt(k, color);
+          }
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        mesh.frustumCulled = false;
+        // Only the tree canopies cast shadows: trunks are too thin to read at
+        // this scale, and each castShadow mesh costs an extra shadow draw.
+        mesh.castShadow = part.shadow;
+        mesh.receiveShadow = false;
+        meshes.push(mesh);
+      }
+    };
+
+    addSpecies(conifers, [
+      { geo: coniferTrunkGeo, mat: trunkMat, trunk: true, shadow: false },
+      { geo: coneLowerGeo, mat: canopyMat, trunk: false, shadow: true },
+      { geo: coneUpperGeo, mat: canopyMat, trunk: false, shadow: true },
+    ]);
+    addSpecies(broadleaves, [
+      { geo: leafTrunkGeo, mat: trunkMat, trunk: true, shadow: false },
+      { geo: leafCanopyGeo, mat: canopyMat, trunk: false, shadow: true },
+    ]);
+    addSpecies(shrubs, [
+      { geo: bushGeo, mat: canopyMat, trunk: false, shadow: false },
+    ]);
+
+    treeGroup = new THREE.Group();
+    treeGroup.add(...meshes);
+    treeStats = {
+      count: conifers.length + broadleaves.length + shrubs.length,
+      meshes: meshes.length,
+    };
+    world.add(treeGroup);
+  }
+
   function disposeWorld() {
     if (!world) return;
     scene.remove(world);
@@ -753,9 +1048,13 @@ export function create3DView(canvas) {
     }
     world = null;
     townGroup = null;
+    // treeGroup lived inside world; its geometries/materials were disposed by
+    // the traversal above, so only the handle needs clearing.
+    treeGroup = null;
+    treeStats = { count: 0, meshes: 0 };
   }
 
-  function update(f, h, t, visibleTown = true, reset = true) {
+  function update(f, h, t, visibleTown = true, reset = true, ecology = null) {
     field = f;
     hydro = h;
     town = t;
@@ -804,6 +1103,7 @@ export function create3DView(canvas) {
     buildRoads();
     buildRailway();
     buildBuildings();
+    buildTrees(ecology);
 
     if (reset) resetCamera();
     resize();
@@ -896,6 +1196,8 @@ export function create3DView(canvas) {
         ? world.children.filter((o) => o.isMesh && o.material
           && o.material.color && o.material.color.getHex() === 0xe09a35).length
         : 0,
+      treeCount: treeStats.count,
+      treeMeshes: treeStats.meshes,
     }),
     get ready() { return Boolean(field); },
   };
