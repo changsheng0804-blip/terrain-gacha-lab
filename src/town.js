@@ -1,6 +1,13 @@
 import { distanceTransform, MinHeap } from './hydrology.js?v=19';
 import { fbm2 } from './noise.js?v=19';
 import { clamp, randInt, range, rngFor } from './rng.js?v=19';
+import { createOccupancy } from './occupancy.js?v=1';
+
+const RAIL_HALF_WIDTH = 6;
+// Depth fractions tried when a full-depth lot collides with something.
+const DEPTH_STEPS = [1, 0.75, 0.55];
+// Frontage shifts (fractions of lot width) tried along the road.
+const SHIFT_STEPS = [0, 0.4, -0.4];
 
 export const ZONE = {
   NONE: 0,
@@ -763,9 +770,8 @@ function parcelOK(field, x, z, angle, w, d) {
   return true;
 }
 
-function buildParcels(field, hydro, zones, roads, railway, rng) {
+function buildParcels(field, hydro, zones, roads, railway, rng, occ) {
   const parcels = [];
-  const hash = new Map();
   const maxParcels = 4200;
   const railPts = railway ? railway.pts : null;
   const station = railway ? railway.station : null;
@@ -776,10 +782,11 @@ function buildParcels(field, hydro, zones, roads, railway, rng) {
     if (railPts && distanceToPolyline(railPts, px, pz) < 20 + Math.max(dims.w, dims.d) * 0.35) return false;
     if (station && Math.hypot(px - station.x, pz - station.z) < Math.max(station.platformW, station.platformD) * 0.8) return false;
 
-    // Adjacent lots share a boundary; a footprint-sized radius would reject
-    // every neighbour along the same frontage.
-    const radius = Math.min(dims.w, dims.d) * 0.4;
-    if (overlaps(hash, px, pz, radius, 80)) return false;
+    // Exact rectangle test against roads, rail, river channels and the lots
+    // already placed. Adjacent lots may touch but never overlap.
+    const rect = { x: px, z: pz, angle, w: dims.w, d: dims.d };
+    if (!occ.canPlace(rect, 'parcel', 0)) return false;
+    occ.add(rect, 'parcel');
 
     parcels.push({
       index: parcels.length,
@@ -793,9 +800,6 @@ function buildParcels(field, hydro, zones, roads, railway, rng) {
       built: false,
     });
 
-    const key = hashKey(px, pz, 80);
-    if (!hash.has(key)) hash.set(key, []);
-    hash.get(key).push({ x: px, z: pz, r: radius });
     return true;
   };
 
@@ -826,22 +830,41 @@ function buildParcels(field, hydro, zones, roads, railway, rng) {
 
         const frontDims = parcelDimensions(probeZone, road.cls, rng);
         const setback = range(rng, 2, 6);
-        const frontOffset = road.width / 2 + setback + frontDims.d / 2;
-        const frontX = x1 + nx * side * frontOffset;
-        const frontZ = z1 + nz * side * frontOffset;
-        const frontZone = zoneAt(field, zones, frontX, frontZ);
-        addParcel(frontX, frontZ, angle, frontDims, frontZone, road.cls);
+        // Lots keep their frontage on the road; when the full depth would run
+        // into another road, a river or a neighbour, try shallower lots.
+        let frontDepth = 0;
+        let shift = 0;
+        const tx = Math.cos(angle);
+        const tz = Math.sin(angle);
+        search:
+        for (const k of DEPTH_STEPS) {
+          for (const sh of SHIFT_STEPS) {
+            const dims = { w: frontDims.w, d: frontDims.d * k };
+            const off = road.width / 2 + setback + dims.d / 2;
+            const along = sh * frontDims.w;
+            const fx = x1 + nx * side * off + tx * along;
+            const fz = z1 + nz * side * off + tz * along;
+            if (addParcel(fx, fz, angle, dims, zoneAt(field, zones, fx, fz), road.cls)) {
+              frontDepth = dims.d;
+              shift = along;
+              break search;
+            }
+          }
+        }
 
         // Urban blocks get a second row of back lots. This is the parcel-level
         // equivalent of the depth seen in real block subdivision.
-        if ([ZONE.CORE, ZONE.RES, ZONE.IND].includes(probeZone)) {
-          const rearDims = parcelDimensions(probeZone, road.cls, rng);
-          const rearOffset = road.width / 2 + setback + frontDims.d
-            + range(rng, 3, 7) + rearDims.d / 2;
-          const rearX = x1 + nx * side * rearOffset;
-          const rearZ = z1 + nz * side * rearOffset;
-          const rearZone = zoneAt(field, zones, rearX, rearZ);
-          addParcel(rearX, rearZ, angle, rearDims, rearZone, road.cls);
+        const rearDims = [ZONE.CORE, ZONE.RES, ZONE.IND].includes(probeZone)
+          ? parcelDimensions(probeZone, road.cls, rng) : null;
+        const rearGap = rearDims ? range(rng, 3, 7) : 0;
+        if (rearDims && frontDepth > 0) {
+          for (const k of DEPTH_STEPS) {
+            const dims = { w: rearDims.w, d: rearDims.d * k };
+            const off = road.width / 2 + setback + frontDepth + rearGap + dims.d / 2;
+            const rx = x1 + nx * side * off + tx * shift;
+            const rz = z1 + nz * side * off + tz * shift;
+            if (addParcel(rx, rz, angle, dims, zoneAt(field, zones, rx, rz), road.cls)) break;
+          }
         }
 
         nextParcel = frontDims.w + range(rng, 1, 5);
@@ -943,9 +966,8 @@ function overlaps(hash, x, z, radius, cell = 60) {
   return false;
 }
 
-function placeBuildings(field, zones, parcels, center, station, rng) {
+function placeBuildings(field, zones, parcels, center, rng, occ) {
   const buildings = [];
-  const hash = new Map();
   const maxBuildings = 2400;
 
   for (const parcel of parcels) {
@@ -965,8 +987,8 @@ function placeBuildings(field, zones, parcels, center, station, rng) {
 
     if (!footprintOK(field, parcel.x, parcel.z, parcel.angle, dims.w, dims.d)) continue;
 
-    const radius = Math.hypot(dims.w, dims.d) / 2 * 0.82;
-    if (overlaps(hash, parcel.x, parcel.z, radius)) continue;
+    const rect = { x: parcel.x, z: parcel.z, angle: parcel.angle, w: dims.w, d: dims.d };
+    if (!occ.canPlace(rect, 'building', 1)) continue;
 
     const height = dims.floors * 3.2 + (dims.type === 'house' ? 1.5 : 0);
     const building = {
@@ -984,39 +1006,88 @@ function placeBuildings(field, zones, parcels, center, station, rng) {
 
     buildings.push(building);
     parcel.built = true;
-
-    const key = hashKey(parcel.x, parcel.z);
-    if (!hash.has(key)) hash.set(key, []);
-    hash.get(key).push({ x: parcel.x, z: parcel.z, r: radius });
-  }
-
-  if (station) {
-    const nx = -Math.sin(station.angle);
-    const nz = Math.cos(station.angle);
-    const offset = station.platformD + 12;
-    const bx = station.x + nx * station.side * offset;
-    const bz = station.z + nz * station.side * offset;
-    const zone = zoneAt(field, zones, bx, bz);
-
-    if ([ZONE.CORE, ZONE.RES, ZONE.IND, ZONE.HAMLET, ZONE.PADDY].includes(zone)
-      && footprintOK(field, bx, bz, station.angle, 28, 12)
-      && !overlaps(hash, bx, bz, 15)) {
-      buildings.push({
-        x: bx,
-        z: bz,
-        angle: station.angle,
-        w: 28,
-        d: 12,
-        floors: 2,
-        h: 8,
-        type: 'station',
-        zone,
-        station: true,
-      });
-    }
+    occ.add(rect, 'building');
   }
 
   return buildings;
+}
+
+/**
+ * Reserve the station building before any lots are cut: infrastructure gets
+ * first claim on the ground. Tries both sides of the platform at several
+ * positions; if every spot is crossed by a local street, the best spot wins
+ * and the streets that cross it are cut back (a small station square).
+ * May shorten or drop entries of `roads` (street class only).
+ */
+function placeStationBuilding(field, zones, railway, roads, hydro) {
+  const station = railway ? railway.station : null;
+  if (!station) return null;
+  const tx = Math.cos(station.angle);
+  const tz = Math.sin(station.angle);
+  const nx = -tz;
+  const nz = tx;
+  const w = 28;
+  const d = 12;
+  const base = station.platformD + 12;
+
+  const occ = createOccupancy(field, hydro);
+  for (const road of roads) occ.addStrip(road.pts, road.width / 2, road.cls);
+  occ.addStrip(railway.pts, RAIL_HALF_WIDTH, 'rail');
+
+  const candidates = [];
+  for (const offset of [base, base + 12, base + 26]) {
+    for (const along of [0, 18, -18, 36, -36, 60, -60]) {
+      for (const side of [station.side, -station.side]) {
+        const bx = station.x + tx * along + nx * side * offset;
+        const bz = station.z + tz * along + nz * side * offset;
+        const zone = zoneAt(field, zones, bx, bz);
+        if (![ZONE.CORE, ZONE.RES, ZONE.IND, ZONE.HAMLET, ZONE.PADDY].includes(zone)) continue;
+        if (!footprintOK(field, bx, bz, station.angle, w, d)) continue;
+        candidates.push({ rect: { x: bx, z: bz, angle: station.angle, w, d }, zone });
+      }
+    }
+  }
+
+  let pick = candidates.find((c) => occ.canPlace(c.rect, 'parcel'));
+  if (!pick) {
+    pick = candidates.find((c) => occ.canPlace(c.rect, 'parcel', 0, ['street']));
+    if (pick) trimStreets(roads, pick.rect);
+  }
+  if (!pick) return null;
+
+  const { rect, zone } = pick;
+  return {
+    x: rect.x,
+    z: rect.z,
+    angle: rect.angle,
+    w,
+    d,
+    floors: 2,
+    h: 8,
+    type: 'station',
+    zone,
+    station: true,
+  };
+}
+
+/** Cut every street that enters rect (plus clearance) back to the part before it. */
+function trimStreets(roads, rect) {
+  const pad = 6;
+  const c = Math.cos(rect.angle);
+  const s = Math.sin(rect.angle);
+  const inside = ([x, z]) => {
+    const dx = x - rect.x;
+    const dz = z - rect.z;
+    return Math.abs(dx * c + dz * s) <= rect.w / 2 + pad && Math.abs(-dx * s + dz * c) <= rect.d / 2 + pad;
+  };
+  for (let i = roads.length - 1; i >= 0; i--) {
+    const road = roads[i];
+    if (road.cls !== 'street') continue;
+    const cut = road.pts.findIndex(inside);
+    if (cut < 0) continue;
+    if (cut < 4) roads.splice(i, 1);
+    else road.pts = road.pts.slice(0, cut);
+  }
 }
 
 /**
@@ -1028,15 +1099,28 @@ export function generateTown(field, hydro, seed) {
   const zoneResult = computeZones(field, hydro, rng);
   const roads = buildRoads(field, hydro, zoneResult.center, zoneResult.zones, rng);
   const railway = traceRailway(field, hydro, zoneResult.zones, zoneResult.center, rng);
-  const parcels = buildParcels(field, hydro, zoneResult.zones, roads, railway, rng);
+
+  // Everything placed from here on is checked against one occupancy layer.
+  const occ = createOccupancy(field, hydro);
+  const stationBuilding = placeStationBuilding(field, zoneResult.zones, railway, roads, hydro);
+  for (const road of roads) occ.addStrip(road.pts, road.width / 2, road.cls);
+  if (railway) occ.addStrip(railway.pts, RAIL_HALF_WIDTH, 'rail');
+  if (stationBuilding) {
+    const rect = { x: stationBuilding.x, z: stationBuilding.z, angle: stationBuilding.angle, w: stationBuilding.w, d: stationBuilding.d };
+    occ.add(rect, 'parcel');
+    occ.add(rect, 'building');
+  }
+
+  const parcels = buildParcels(field, hydro, zoneResult.zones, roads, railway, rng, occ);
   const buildings = placeBuildings(
     field,
     zoneResult.zones,
     parcels,
     zoneResult.center,
-    railway ? railway.station : null,
     rng,
+    occ,
   );
+  if (stationBuilding) buildings.push(stationBuilding);
 
   let arterialKm = 0;
   let streetKm = 0;

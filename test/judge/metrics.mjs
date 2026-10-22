@@ -1,6 +1,8 @@
 import {
-  SpatialHash, indexSegments, obbBounds, obbCorners, obbOverlap, segObbDist, segSegDist,
+  SpatialHash, indexSegments, obbBounds, obbOverlap, segObbDist, segSegDist,
 } from './geometry.mjs';
+
+import { riverHalfWidth } from '../../src/occupancy.js';
 
 const ZONE_NONE = 0;
 const ZONE_WATER = 6;
@@ -97,6 +99,23 @@ export function townMetrics(world) {
 
   // Roads and railway as thick polylines.
   const roadIdx = indexSegments(town.roads.map((r) => ({ pts: r.pts, hw: r.width / 2 })));
+  // River channels: each river cell to its downstream cell, half width from
+  // drainage area (formula shared with the generator as a contract; the
+  // geometry here is computed independently).
+  const riverPl = [];
+  {
+    const { n, cell, x0, y0 } = field;
+    const { riverMask, dir, acc } = world.hydro;
+    for (let i = 0; i < n * n; i++) {
+      if (!riverMask[i] || dir[i] < 0) continue;
+      const d = dir[i];
+      riverPl.push({
+        pts: [[x0 + (i % n) * cell, y0 + ((i / n) | 0) * cell], [x0 + (d % n) * cell, y0 + ((d / n) | 0) * cell]],
+        hw: riverHalfWidth(acc[i] * cell * cell),
+      });
+    }
+  }
+  const riverIdx = indexSegments(riverPl);
   const railIdx = town.railway
     ? indexSegments([{ pts: town.railway.pts, hw: RAIL_HALF_WIDTH }])
     : null;
@@ -129,9 +148,10 @@ export function townMetrics(world) {
     if (h <= 0.8 || zone === ZONE_NONE || zone === ZONE_WATER || slopeDeg(field, i) > 20) badSite++;
 
     // Rivers are land cells in the zone map, so check the footprint against
-    // the river mask explicitly (centre + four corners).
-    const pts = [[b.x, b.z], ...obbCorners(b)];
-    if (pts.some(([x, z]) => world.hydro.riverMask[idxAt(field, x, z)])) inRiver++;
+    // the river channels explicitly.
+    for (const s of riverIdx.hash.query(minX - 32, minZ - 32, maxX + 32, maxZ + 32)) {
+      if (segObbDist(b, s.a, s.b) < s.hw) { inRiver++; break; }
+    }
 
     let hit = false;
     for (const other of bHash.query(minX, minZ, maxX, maxZ)) {

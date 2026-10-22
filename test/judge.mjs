@@ -75,7 +75,7 @@ const RULES = [
     value: (d) => stats.max(d.worlds.map((w) => w.m.bld_on_rail_pct)), op: '<=', limit: 0, better: 'lower' },
   { id: 'bld_bad_site', kind: 'target', label: '建筑落在水面/无分区/陡坡（最差世界 %）',
     value: (d) => stats.max(d.worlds.map((w) => w.m.bld_bad_site_pct)), op: '<=', limit: 0.5, better: 'lower' },
-  { id: 'bld_in_river', kind: 'target', label: '建筑压在河道上（最差世界 %）',
+  { id: 'bld_in_river', kind: 'target', label: '建筑压在河道上（按汇流面积定河宽，最差世界 %）',
     value: (d) => stats.max(d.worlds.map((w) => w.m.bld_in_river_pct)), op: '<=', limit: 0, better: 'lower' },
   { id: 'station_rate', kind: 'target', label: '有站房的世界比例 %',
     value: (d) => stats.mean(d.worlds.map((w) => w.m.station_building)) * 100, op: '>=', limit: 100, better: 'higher' },
