@@ -7,7 +7,7 @@ import { rngFor } from './rng.js?v=19';
 import { create3DView } from './view3d.js?v=30';
 import { createRecorder } from './timeline.js';
 import { buildTownReplay } from './town-replay.js';
-import { computeReflexHeatmap } from './reflex/heatmap.js';
+import { computeReflexHeatmap } from './reflex/heatmap.js?v=2';
 
 const $ = (id) => document.getElementById(id);
 
@@ -19,10 +19,72 @@ const statusEl = $('status');
 const hoverEl = $('hover');
 const statsEl = $('stats');
 const generateBtn = $('generate');
+const minimapCanvas = $('minimapCanvas');
+const minimapBox = $('minimapBox');
 const timelineBar = $('timelineBar');
 const timelinePlayBtn = $('timelinePlay');
 const timelineSlider = $('timelineSlider');
 const timelineLabel = $('timelineLabel');
+
+let focusedSliceBounds = null; // 当前保持聚焦的 600m 区域 (在各个视图间切换时保持一致)
+
+function updateMinimap() {
+  if (!field || !minimapCanvas) return;
+  const ctx = minimapCanvas.getContext('2d');
+  const size = 96;
+  const n = field.n;
+  const imgData = ctx.createImageData(size, size);
+  const data = imgData.data;
+
+  // 绘制低分辨率整体全景 (高度+水体基底)
+  for (let y = 0; y < size; y++) {
+    const gy = Math.floor((y / size) * n);
+    for (let x = 0; x < size; x++) {
+      const gx = Math.floor((x / size) * n);
+      const idx = gy * n + gx;
+      const k = (y * size + x) * 4;
+      const h = field.height[idx];
+      const isSea = hydro && hydro.seaMask && hydro.seaMask[idx];
+      if (isSea || h <= 0) {
+        data[k] = 22; data[k + 1] = 68; data[k + 2] = 104; data[k + 3] = 255;
+      } else {
+        const u = Math.min(1, Math.max(0, h / 350));
+        data[k] = 40 + u * 120;
+        data[k + 1] = 75 + u * 80;
+        data[k + 2] = 45 + u * 40;
+        data[k + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+
+  // 绘制城镇中心点
+  if (town && town.center) {
+    const cx = ((town.center.x - field.x0) / field.size) * size;
+    const cz = ((town.center.z - field.y0) / field.size) * size;
+    ctx.fillStyle = '#ffcc00';
+    ctx.beginPath();
+    ctx.arc(cx, cz, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  updateMinimapBox();
+}
+
+function updateMinimapBox() {
+  if (!field || !minimapBox) return;
+  const vb = viewBounds || { x0: field.x0, y0: field.y0, size: field.size };
+  const size = 96;
+  const left = Math.max(0, Math.min(size, ((vb.x0 - field.x0) / field.size) * size));
+  const top = Math.max(0, Math.min(size, ((vb.y0 - field.y0) / field.size) * size));
+  const w = Math.max(4, Math.min(size - left, (vb.size / field.size) * size));
+  const h = Math.max(4, Math.min(size - top, (vb.size / field.size) * size));
+
+  minimapBox.style.left = `${left}px`;
+  minimapBox.style.top = `${top}px`;
+  minimapBox.style.width = `${w}px`;
+  minimapBox.style.height = `${h}px`;
+}
 
 const state = {
   type: 'river',
@@ -188,7 +250,7 @@ async function generate() {
       field.__reflexHeatmap = computeReflexHeatmap({ field, hydro, town, ecology: null }, 160);
       updateAnomalyUI();
     } catch (e) {
-      console.warn('Reflex heatmap computation skipped:', e);
+      console.error('Reflex heatmap computation error:', e);
       field.__reflexHeatmap = null;
     }
 
@@ -203,6 +265,7 @@ async function generate() {
     const renderInfo = renderTerrain(canvas, field, hydro, town, state.view, state.showTown);
     const { minH, maxH } = renderInfo;
     viewBounds = renderInfo.viewBounds;
+    updateMinimap();
     window.__tgl = {
       field,
       hydro,
@@ -421,7 +484,14 @@ document.querySelectorAll('#views button').forEach((button) => {
     }
 
     if (state.view === '3d') {
-      if (syncMode(false)) setStatus(`3D · ${fmt(timings.total)} ms`);
+      if (syncMode(false)) {
+        if (focusedSliceBounds && view3d && view3dReady) {
+          const cx = focusedSliceBounds.x0 + focusedSliceBounds.size / 2;
+          const cz = focusedSliceBounds.y0 + focusedSliceBounds.size / 2;
+          view3d.focusPoint(cx, cz, 520);
+        }
+        setStatus(`3D · ${fmt(timings.total)} ms`);
+      }
       return;
     }
 
@@ -434,8 +504,9 @@ document.querySelectorAll('#views button').forEach((button) => {
       reflexNavWrap.hidden = (state.view !== 'reflex');
     }
 
-    const info = renderTerrain(canvas, field, hydro, town, state.view, state.showTown);
+    const info = renderTerrain(canvas, field, hydro, town, state.view, state.showTown, null, focusedSliceBounds);
     viewBounds = info.viewBounds;
+    updateMinimapBox();
     if (window.__tgl) window.__tgl.renderInfo = info;
     syncMode(false);
     setStatus(`完成 · ${fmt(timings.total)} ms`);
@@ -545,12 +616,14 @@ function showAnomalyCard(anomaly) {
   const isDanger = anomaly.score < -0.15;
   cardEl.classList.toggle('danger', isDanger);
   const tag = isDanger ? '🔴 病态违和' : '🟡 边缘疑难';
+  const causeList = (anomaly.feat.conflicts || []).map((c) => `• ${c}`).join('<br>');
 
   cardEl.innerHTML = `
     <b>#${currentAnomalyIndex + 1} ${tag}</b> (评分: ${anomaly.score.toFixed(2)})<br>
     坐标: (${Math.round(anomaly.cx)}, ${Math.round(anomaly.cz)}) · 分区: ${anomaly.feat.dominantZone}<br>
     坡度: 平均 ${anomaly.feat.slopeMean.toFixed(1)}° (最大 ${anomaly.feat.slopeMax.toFixed(1)}°)<br>
-    建筑: ${anomaly.feat.buildingCount} 栋 · 道路密度: ${anomaly.feat.roadDensityKm2.toFixed(1)} km/km²
+    建筑: ${anomaly.feat.buildingCount} 栋 · 道路: ${anomaly.feat.roadDensityKm2.toFixed(1)} km/km²
+    <div class="anomaly-cause">${causeList}</div>
   `;
 }
 
@@ -563,21 +636,25 @@ function focusCurrentAnomaly() {
   const a = anomalies[currentAnomalyIndex];
   showAnomalyCard(a);
 
-  // 1. 若处于 3D 模式，平滑飞行镜头到目标点
-  if (state.view === '3d' && view3d && view3dReady) {
-    view3d.focusPoint(a.cx, a.cz, 500);
-    setStatus(`聚焦违和切片 #${currentAnomalyIndex + 1} · (${Math.round(a.cx)}, ${Math.round(a.cz)})`);
-    return;
-  }
-
-  // 2. 若处于 2D 模式，居中裁剪显示该切片特写 (300m 半径)
-  const customBounds = {
+  // 记录当前聚焦的 600m 空间范围 (供彩色/坡度/高度/3D 跨视图无缝保持一致)
+  focusedSliceBounds = {
     x0: a.cx - 300,
     y0: a.cz - 300,
     size: 600,
   };
-  const info = renderTerrain(canvas, field, hydro, town, state.view, state.showTown, null, customBounds);
+
+  // 1. 若处于 3D 模式，平滑飞行镜头到目标点 (保持俯瞰切片特写)
+  if (state.view === '3d' && view3d && view3dReady) {
+    view3d.focusPoint(a.cx, a.cz, 520);
+    setStatus(`聚焦违和切片 #${currentAnomalyIndex + 1} · (${Math.round(a.cx)}, ${Math.round(a.cz)})`);
+    updateMinimapBox();
+    return;
+  }
+
+  // 2. 若处于 2D 模式，居中裁剪显示该切片特写
+  const info = renderTerrain(canvas, field, hydro, town, state.view, state.showTown, null, focusedSliceBounds);
   viewBounds = info.viewBounds;
+  updateMinimapBox();
   setStatus(`聚焦违和切片 #${currentAnomalyIndex + 1} · (${Math.round(a.cx)}, ${Math.round(a.cz)})`);
 }
 

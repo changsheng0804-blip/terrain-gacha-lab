@@ -322,6 +322,42 @@ canvas {
   word-break: break-word;
 }
 .anomaly-card.danger { border-left-color: #e63946; }
+.anomaly-cause {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(255,255,255,0.1);
+  color: #fca311;
+  font-weight: 500;
+}
+
+.minimap-wrap {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 96px;
+  height: 96px;
+  background: rgba(13, 22, 32, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.45);
+  backdrop-filter: blur(6px);
+  z-index: 10;
+  pointer-events: none;
+}
+#minimapCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.minimap-box {
+  position: absolute;
+  border: 2px solid #ff3344;
+  background: rgba(255, 51, 68, 0.22);
+  box-sizing: border-box;
+  pointer-events: none;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
 
 @media (max-width: 860px) {
   main { display: flex; flex-direction: column; }

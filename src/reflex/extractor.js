@@ -71,6 +71,7 @@ export function extractTileFeature(world, cx, cz, radius = 120) {
   }
 
   const hMean = gridCount ? hSum / gridCount : 0;
+  const hSpan = (hMax > hMin) ? (hMax - hMin) : 0;
   const slopeMean = gridCount ? slopeSum / gridCount : 0;
   const waterPct = gridCount ? (waterCells / gridCount) : 0;
   const riverPct = gridCount ? (riverCells / gridCount) : 0;
@@ -157,6 +158,32 @@ export function extractTileFeature(world, cx, cz, radius = 120) {
     Math.min(1, roadDensityKm2 / 15)// 道路密度
   ];
 
+  // 6. 生成人机可读的具体矛盾与病理成因 (Why is it an anomaly?)
+  const conflicts = [];
+  if (slopeMax > 24 && buildingCount > 0) {
+    conflicts.push(`陡坡建城：最大坡度达 ${slopeMax.toFixed(1)}°，仍硬性放置了 ${buildingCount} 栋建筑`);
+  }
+  if (hSpan > 70 && buildingCount > 0) {
+    conflicts.push(`断崖落差：切片内落差高达 ${hSpan.toFixed(0)}m，建筑地基高度悬殊`);
+  }
+  if (waterPct > 0.35 && buildingCount > 0) {
+    conflicts.push(`涉水风险：水面覆盖达 ${(waterPct * 100).toFixed(0)}%，建筑贴水过近或侵入浅滩`);
+  }
+  if (buildingCount >= 4 && roadDensityKm2 < 1.5) {
+    conflicts.push(`交通缺失：聚集了 ${buildingCount} 栋建筑但缺乏有效道路连通 (密度仅 ${roadDensityKm2.toFixed(1)} km/km²)`);
+  }
+  if (dominantZone === 'IND' && slopeMean > 8) {
+    conflicts.push(`工业选址违和：工业区通常需要大平地，当前平均坡度 ${slopeMean.toFixed(1)}° 偏陡`);
+  }
+  if (dominantZone === 'CORE' && hSpan > 45) {
+    conflicts.push(`商业核心区崎岖：高差达 ${hSpan.toFixed(0)}m，不利于高密度人流聚集`);
+  }
+  if (conflicts.length === 0) {
+    if (slopeMax > 22) conflicts.push(`边缘地形较险（坡度 ${slopeMax.toFixed(1)}°）`);
+    else if (buildingCount === 0) conflicts.push(`孤立荒野边缘地块`);
+    else conflicts.push(`局部肌理与标准原型轻微偏离`);
+  }
+
   return {
     cx,
     cz,
@@ -172,5 +199,6 @@ export function extractTileFeature(world, cx, cz, radius = 120) {
     roadDensityKm2,
     description,
     numericVector,
+    conflicts,
   };
 }

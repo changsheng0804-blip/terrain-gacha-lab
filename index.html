@@ -137,6 +137,11 @@
         <canvas id="canvas3d" width="512" height="512"></canvas>
         <div id="status" class="status">准备就绪</div>
         <div id="hover" class="hover"></div>
+        <!-- Minimap 总图及当前板块定位 -->
+        <div id="minimapWrap" class="minimap-wrap" title="世界全景总图 (红框为当前聚集视口)">
+          <canvas id="minimapCanvas" width="96" height="96"></canvas>
+          <div id="minimapBox" class="minimap-box"></div>
+        </div>
         <div id="timelineBar" class="timeline-bar" hidden>
           <button id="timelinePlay" class="timeline-btn" type="button" title="播放/暂停">▶ 演化</button>
           <input id="timelineSlider" class="timeline-slider" type="range" min="0" max="1000" value="1000">
@@ -146,6 +151,6 @@
     </section>
   </main>
 
-  <script type="module" src="src/main.js?v=50"></script>
+  <script type="module" src="src/main.js?v=56"></script>
 </body>
 </html>
